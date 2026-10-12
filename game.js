@@ -258,9 +258,34 @@ export function conceptionRate(ewe, method) {
   const m = monthOf(S().day);
   let season = (m >= 7 && m <= 11) ? 1 : (m <= 1 ? 0.75 : 0.45);
   if (season < 1 && OUT_SEASON_OK.includes(ewe.breed)) season = Math.max(season, 0.85);
+  if (ewe.synced) season = 1; // CIDR + PG600 brings her into heat even out of season
   const base = method === 'AI' ? 0.68 : method === 'ET' ? 0.6 : 0.93;
   const age = ageDays(ewe);
-  return base * season * (age < 240 ? 0 : age < 330 ? 0.8 : 1);
+  return Math.min(0.98, base * season * (age < 240 ? 0 : age < 330 ? 0.8 : 1) * (ewe.synced ? 1.25 : 1));
+}
+export const SYNC_COST = 25;
+export function syncEwes(ids) {
+  const s = S(); const list = ids.map(id => s.animals[id]).filter(e => e && e.owner === 'P' && canBreed(e) && !e.synced);
+  if (!list.length) return 'No open ewes to synchronize.';
+  const cost = list.length * SYNC_COST;
+  if (s.cash < cost) return `Syncing ${list.length} ewes costs ${money(cost)}.`;
+  addCash(-cost, `Synchronized ${list.length} ewe${list.length > 1 ? 's' : ''} (CIDR + PG600)`);
+  list.forEach(e => e.synced = true);
+  return null;
+}
+// Bulk breed: src = { ramId } | { tankIdx } | { embId }. Breeds as many as straws/embryos allow.
+export function bulkBreed(ids, method, src) {
+  const s = S(); const done = [], left = [];
+  let tankSnap = method === 'AI' ? s.tank[src.tankIdx]?.snap : null;
+  for (const id of ids) {
+    const e = s.animals[id]; if (!e || !canBreed(e)) continue;
+    let err;
+    if (method === 'Natural') err = breedNatural(id, src.ramId);
+    else if (method === 'AI') { const i = s.tank.findIndex(t => t.snap === tankSnap); err = i < 0 ? 'Out of straws.' : breedAI(id, i); }
+    else err = implant(src.embId, id);
+    (err ? left : done).push({ name: e.name, err });
+  }
+  return { done, left };
 }
 export const canBreed = e => e.sex === 'E' && !e.preg && ageDays(e) >= 240 && !e.listing;
 
@@ -268,6 +293,7 @@ export const canBreed = e => e.sex === 'E' && !e.preg && ageDays(e) >= 240 && !e
 function settle(ewe, sireSnap, method, donor) {
   const s = S();
   const ok = Math.random() < conceptionRate(ewe, method);
+  delete ewe.synced;
   ewe.preg = { sire: sireSnap, method, bredDay: s.day, check: s.day + 30, ok, due: s.day + GESTATION + irnd(-3, 3), donor: donor || null, count: ok ? (donor ? 1 : litterSize(ewe)) : 0 };
 }
 
@@ -1148,6 +1174,19 @@ function stockFlock(f, withLambs) {
 }
 
 // ---------- new game ----------
+// Starter builder: breed (or 'Blackface cross' / 'Whiteface cross'), sex E/R/W, age key
+export const STARTER_AGES = [['lamb3', 'Lamb, 2–3 mo', 65, 95], ['lamb6', 'Lamb, 4–6 mo', 120, 180], ['year', 'Yearling', 400, 700], ['y23', '2–3 yr', 730, 1095], ['y45', '4–5 yr', 1460, 1825]];
+export const STARTER_LIMITS = { E: 15, R: 3, W: 4 };
+export function makeStarter(breedKey, sex, ageKey) {
+  const ag = STARTER_AGES.find(x => x[0] === ageKey) || STARTER_AGES[3];
+  const cross = breedKey === 'Blackface cross' || breedKey === 'Whiteface cross';
+  const breed = cross ? 'Crossbred' : breedKey;
+  const face = breedKey === 'Whiteface cross' ? 'white' : breedKey === 'Blackface cross' ? 'black' : undefined;
+  const comp = breedKey === 'Whiteface cross' ? 'Dorset × Montadale' : pick(['Hampshire × Suffolk', 'Suffolk × Hampshire', 'Hampshire × Southdown', 'Suffolk × Shropshire']);
+  const a = makeFounder({ breed, sex, ageDays: irnd(ag[2], ag[3]), owner: 'P', q: rnd(1, 6) + (sex === 'R' ? 1 : 0), comp, face });
+  if (ageDays(a) < 365) { a.cond = 2.8; a.fit = 60; a.train = 50; }
+  return a;
+}
 export function starterOptions() {
   const s = S();
   const q = () => rnd(1, 6);
@@ -1172,7 +1211,7 @@ export function starterOptions() {
 }
 export function createWorld({ flockName: fname, home, county }) {
   G.s = {
-    v: 1, day: 0, frac: 0, nextId: 1, cash: 10000, home, county: (county || '').replace(/\s*county\s*$/i, '').trim(),
+    v: 1, day: 0, frac: 0, nextId: 1, cash: 15000, home, county: (county || '').replace(/\s*county\s*$/i, '').trim(),
     flocks: [], animals: {}, listings: [], directory: [], tank: [], embryos: [], entries: {}, judges: {}, results: [],
     news: [], toasts: [], ledger: [], topSales: [], sireStats: {}, banners: [], ach: {}, stats: { born: 0, semen: 0 },
     settings: { speed: 1, pauseShows: true, pauseLambing: true }, paused: true, started: false,
@@ -1191,7 +1230,8 @@ export function createWorld({ flockName: fname, home, county }) {
 export function finishSetup(ewes, ram, wethers = []) {
   const s = S();
   pens();
-  [...ewes, ram, ...wethers].forEach(a => { a.owner = 'P'; a.care = defaultCare(); a.pen = 'main'; if (ageDays(a) < 200) a.string = true; addAnimal(a); });
+  const all = Array.isArray(ewes) && ram === undefined ? ewes : [...ewes, ram, ...wethers];
+  all.forEach(a => { a.owner = 'P'; a.care = defaultCare(); a.pen = 'main'; if (ageDays(a) < 200) a.string = true; addAnimal(a); });
   for (const f of s.flocks) if (f.id !== 'P') stockFlock(f, true);
   aiCalendar(0, 8, 1); // flocks turn their rams in on Sep 1
   refreshDirectory();
