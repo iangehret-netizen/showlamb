@@ -6,7 +6,10 @@
   --safe-b: env(safe-area-inset-bottom, 0px); --safe-t: env(safe-area-inset-top, 0px);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; background: var(--cream); color: var(--ink); font: 15px/1.4 var(--sans); }
+html, body { margin: 0; background: var(--cream); color: var(--ink); font: 15px/1.4 var(--sans); overflow-x: hidden; max-width: 100%; touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* 16px inputs stop iPhone from zooming in when a field is tapped */
+input, select, textarea { font-size: 16px !important; }
+img, svg { max-width: 100%; }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 .hidden { display: none !important; }
@@ -156,3 +159,14 @@ input[type=range] { width: 100%; accent-color: var(--barn); }
 .ach.locked { opacity: .55; }
 .ach .ic { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--gold-soft); font-weight: 800; color: #7a5a10; flex: none; }
 @media (max-width: 380px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+/* pedigree */
+.ped { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 6px; }
+.ped .ph { font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); font-weight: 700; padding: 0 2px 4px; }
+.ped .pg { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(8, minmax(38px, auto)); gap: 4px 6px; }
+.pc { background: var(--paper); border: 1px solid var(--line); border-left: 3px solid #5c7da8; border-radius: 8px; padding: 4px 6px; display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.pc.d { border-left-color: #b0708f; }
+.pc b { font-size: 12.5px; line-height: 1.2; overflow-wrap: anywhere; }
+.pc small { font-size: 10.5px; color: var(--muted); line-height: 1.2; }
+.pc .pr { font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+.filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }

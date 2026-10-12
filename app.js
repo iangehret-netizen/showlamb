@@ -57,6 +57,7 @@ function pregBadge(a) {
 function badges(a) {
   const out = [];
   if (a.reg) out.push('<span class="b reg">Reg</span>');
+  else if (a.regOk && a.sex !== 'W' && a.owner === 'P') out.push('<span class="b list">Can register</span>');
   if (a.string) out.push('<span class="b str">Show string</span>');
   out.push(pregBadge(a));
   if (a.listing) out.push('<span class="b list">For sale</span>');
@@ -157,46 +158,72 @@ function viewShows() {
     const col = { grand: '#5b2a86', reserve: '#8c74a8', breed: '#1f4e9c', breedres: '#c4c9d4' };
     return `<h2>Shows</h2>${seg}${s.banners.length ? s.banners.map(b => `<div class="card">${bannerSVG(col[b.kind])}<div class="grow"><div class="nm">${esc(b.title)}</div><div class="ln">${esc(b.animal)} · ${esc(b.show)} · ${g.fmtDate(b.day)}</div></div></div>`).join('') : '<div class="empty">No banners yet. Go win one.</div>'}`;
   }
-  const up = g.upcomingShows(14);
-  return `<h2>Shows</h2>${seg}${up.map(sh => {
+  const f = UI.sfilter || 'all';
+  const up = g.upcomingShows(f === 'jackpot' ? 30 : 24, { noJackpots: f === 'fair', jackpotsOnly: f === 'jackpot', horizon: f === 'jackpot' ? 120 : 75 });
+  const sc = (k, l) => `<button class="chip ${f === k ? 'on' : ''}" data-act="sfilter" data-v="${k}">${l}</button>`;
+  return `<h2>Shows</h2>${seg}<div class="chips">${sc('all', 'All')}${sc('jackpot', 'Jackpots')}${sc('fair', 'Fairs & majors')}</div>${up.map(sh => {
     const j = g.judgeFor(sh.key); const e = s.entries[sh.key]; const n = e ? e.market.length + e.breeding.length : 0;
-    return `<div class="panel"><div class="row"><div class="grow"><div class="nm" style="font-weight:700">${esc(sh.name)}</div><div class="sub">${g.fmtDate(sh.day)} · ${daysTo(sh.day)}</div></div><span class="b ${sh.tier === 'national' || sh.tier === 'major' ? 'ban' : ''}">${TIER[sh.tier].label}</span></div>
+    return `<div class="panel"><div class="row"><div class="grow"><div class="nm" style="font-weight:700">${esc(sh.name)}</div><div class="sub">${g.fmtDate(sh.day)} · ${daysTo(sh.day)}</div></div><span class="b ${sh.tier === 'national' || sh.tier === 'major' ? 'ban' : ''}">${sh.jackpot ? (sh.regional ? 'Regional jackpot' : 'Jackpot') : TIER[sh.tier].label}</span></div>${sh.venue ? `<div class="sub">${esc(sh.venue)}, ${esc(STATES[sh.host])}</div>` : ''}
     <div class="sub" style="margin-top:6px">${sh.breeding ? 'Market lambs + breeding sheep' : 'Market lambs'} · weights ${sh.minWt}–${sh.maxWt} lb · ${money(sh.fee)}/head</div>
     <div class="sub">Judge: <b>${esc(j.name)}</b> (${esc(j.from)}) — ${esc(['Power judge — muscle & dimension', 'Balance & eye appeal', 'Structure first', 'Complete package', 'Big-boned & stout'][j.style])}</div>
     <div class="btns"><button class="btn sm" data-act="entersheet" data-key="${sh.key}">${n ? `Entries (${n})` : 'Enter'}</button></div></div>`;
   }).join('')}`;
 }
 
+const CATS = [['all', 'All'], ['lamb', 'Ewe lambs'], ['wether', 'Wethers'], ['ewe', 'Ewes'], ['bred', 'Bred ewes'], ['ram', 'Rams'], ['semen', 'Semen'], ['embryo', 'Embryos']];
+function marketItems() {
+  const s = S(); const items = [];
+  for (const L of s.listings) {
+    if (L.seller === 'P') continue;
+    if (L.kind === 'embryo') { items.push({ L, cat: 'embryo', breed: L.emb.dam.breed, price: g.currentBid(L).price, q: (g.breedingIndex(L.emb.dam) + g.breedingIndex(L.emb.sire)) / 2, end: L.end }); continue; }
+    const a = s.animals[L.aid]; if (!a) continue;
+    const cat = g.listCategory(a);
+    items.push({ L, a, cat, breed: a.breed, price: L.mode === 'auction' ? g.currentBid(L).price : L.price, q: cat === 'lamb' || cat === 'wether' ? g.marketIndex(a) : g.breedingIndex(a), end: L.end });
+  }
+  for (const d of s.directory) if (d.owner !== 'P') items.push({ d, cat: 'semen', breed: d.snap.breed, price: d.price, q: g.breedingIndex(d.snap), end: d.until });
+  return items;
+}
+function semenCard(d) {
+  const sn = d.snap; const ts = g.traitScores(sn);
+  return `<div class="card"><div class="pic">${sheep(sn, 54)}</div><div class="grow"><button class="nm" style="border:0;background:none;padding:0;text-align:left" data-act="snap" data-id="${d.id}">${esc(sn.name)}</button><div class="ln">Semen · ${esc(g.breedLabel(sn))} · ${esc(sn.ownerName)} ${stars(sn.owner)}</div><div class="ln">MUS ${ts.muscle} · DIM ${ts.dimension} · BAL ${ts.balance} · STR ${ts.structure}${sn.reg ? ` · WW ${signed(g.epdShown(sn, 'WW'), 1)}` : ''}</div></div><div class="right"><div class="price">${money(d.price)}</div><div class="sub">per straw</div><select data-on="qty" data-id="${d.id}" style="width:auto;padding:4px 6px;margin-top:4px">${[1, 2, 4, 6, 10].map(n => `<option>${n}</option>`).join('')}</select><button class="btn sm" style="margin-top:4px" data-act="buysemen" data-id="${d.id}">Buy</button></div></div>`;
+}
+const CAT_LABEL = { lamb: 'Ewe lamb', wether: 'Wether', ewe: 'Ewe', bred: 'Bred ewe', ram: 'Ram', semen: 'Semen', embryo: 'Embryos' };
+function lotCard(it) {
+  const s = S(); const L = it.L; const cb = g.currentBid(L);
+  const status = L.playerMax ? (cb.leader === 'P' ? '<span class="b str">You lead</span>' : '<span class="b bad">Outbid</span>') : '';
+  const priceLine = L.mode === 'auction' ? `${money(cb.price)} · ${cb.count} bid${cb.count === 1 ? '' : 's'} · closes ${g.fmtShort(L.end)}` : `Buy now ${money(L.price)}`;
+  const seller = `${esc(g.flockName(L.seller))} (${g.flock(L.seller)?.state || ''}) ${stars(L.seller)}`;
+  if (L.kind === 'embryo') return `<button class="card" data-act="lot" data-id="${L.id}"><div class="pic">${sheep(L.emb.dam, 58)}</div><div class="grow"><div class="nm">${L.emb.count} embryos — ${esc(L.emb.sire.name)} × ${esc(L.emb.dam.name)}</div><div class="ln">${esc(g.breedLabel(L.emb.dam))} · ${seller}</div><div class="ln"><b>${priceLine}</b></div><div class="badges"><span class="b">Embryos</span>${status}</div></div></button>`;
+  const a = it.a;
+  return `<button class="card" data-act="lot" data-id="${L.id}"><div class="pic">${sheep(a, 62)}</div><div class="grow"><div class="nm">${esc(a.name)}</div><div class="ln">${esc(g.breedLabel(a))} · ${g.ageText(a)} · ${Math.round(a.wt)} lb</div><div class="ln">${seller}</div><div class="ln"><b>${priceLine}</b></div><div class="badges"><span class="b">${CAT_LABEL[it.cat]}</span>${it.cat === 'bred' && a.preg ? `<span class="b preg">${s.day >= a.preg.check ? `Due ${g.fmtShort(a.preg.due)} · ${esc(a.preg.sire.name)}` : `Exposed to ${esc(a.preg.sire.name)}`}</span>` : ''}${a.reg ? '<span class="b reg">Reg</span>' : ''}${status}</div></div></button>`;
+}
 function viewMarket() {
   const s = S();
-  const seg = `<div class="seg">${[['browse', 'For sale'], ['sires', 'Sire directory'], ['mine', 'My lots']].map(([k, l]) => `<button class="${UI.mtab === k ? 'on' : ''}" data-act="mtab" data-v="${k}">${l}</button>`).join('')}</div>`;
-  if (UI.mtab === 'sires') {
-    const dir = s.directory.filter(d => d.owner !== 'P').sort((a, b) => g.breedingIndex(b.snap) - g.breedingIndex(a.snap));
-    const minep = s.directory.filter(d => d.owner === 'P');
-    return `<h2>Market</h2>${seg}
-    ${minep.length ? `<h3>Your sires</h3>${minep.map(d => `<div class="card"><div class="pic">${sheep(d.snap, 54)}</div><div class="grow"><div class="nm">${esc(d.snap.name)}</div><div class="ln">${money(d.price)}/straw · ${d.sold} sold · listed until ${g.fmtShort(d.until)}</div></div><button class="btn sm sec" data-act="unlist" data-id="${d.id}">Remove</button></div>`).join('')}` : ''}
-    <div class="note">Semen ships to your tank. Lap AI is $150 per ewe; a flush uses 2 straws. List your own ram for ${money(g.DIRECTORY_FEE)}/year from his animal card.</div>
-    ${dir.map(d => { const sn = d.snap; const ts = g.traitScores(sn); return `<div class="card"><div class="pic">${sheep(sn, 54)}</div><div class="grow"><button class="nm" style="border:0;background:none;padding:0;text-align:left" data-act="snap" data-id="${d.id}">${esc(sn.name)}</button><div class="ln">${esc(g.breedLabel(sn))} · ${esc(sn.ownerName)} ${stars(sn.owner)}</div><div class="ln">MUS ${ts.muscle} · DIM ${ts.dimension} · BAL ${ts.balance} · STR ${ts.structure}${sn.reg ? ` · WW ${signed(g.epdShown(sn, 'WW'), 1)}` : ''}</div></div><div class="right"><div class="price">${money(d.price)}</div><div class="sub">per straw</div><select data-on="qty" data-id="${d.id}" style="width:auto;padding:4px 6px;margin-top:4px">${[1, 2, 4, 6, 10].map(n => `<option>${n}</option>`).join('')}</select><button class="btn sm" style="margin-top:4px" data-act="buysemen" data-id="${d.id}">Buy</button></div></div>`; }).join('')}`;
-  }
+  const seg = `<div class="seg">${[['browse', 'For sale'], ['mine', 'My lots & bids']].map(([k, l]) => `<button class="${UI.mtab === k ? 'on' : ''}" data-act="mtab" data-v="${k}">${l}</button>`).join('')}</div>`;
   if (UI.mtab === 'mine') {
     const lots = s.listings.filter(l => l.seller === 'P');
     const bids = s.listings.filter(l => l.playerMax && l.seller !== 'P');
+    const minep = s.directory.filter(d => d.owner === 'P');
     const lotRow = L => { const cb = g.currentBid(L); const nm = L.kind === 'animal' ? s.animals[L.aid]?.name : `${L.emb.count} embryos (${L.emb.sire.name} × ${L.emb.dam.name})`; return `<div class="card"><div class="grow"><div class="nm">${esc(nm)}</div><div class="ln">${L.mode === 'auction' ? `Auction · ${cb.count} bidder${cb.count === 1 ? '' : 's'} · ${money(cb.price)}` : `Buy now ${money(L.price)}`} · ends ${g.fmtShort(L.end)}</div></div>${L.seller === 'P' ? `<button class="btn sm sec" data-act="cancellot" data-id="${L.id}">Pull</button>` : `<button class="btn sm" data-act="lot" data-id="${L.id}">View</button>`}</div>`; };
     return `<h2>Market</h2>${seg}<h3>Your consignments</h3>${lots.length ? lots.map(lotRow).join('') : '<div class="empty">Nothing listed. Sell from an animal’s card.</div>'}
+    <h3>Your sires in the directory</h3>${minep.length ? minep.map(d => `<div class="card"><div class="pic">${sheep(d.snap, 54)}</div><div class="grow"><div class="nm">${esc(d.snap.name)}</div><div class="ln">${money(d.price)}/straw · ${d.sold} sold · listed until ${g.fmtShort(d.until)}</div></div><button class="btn sm sec" data-act="unlist" data-id="${d.id}">Remove</button></div>`).join('') : `<div class="empty">List a ram from his animal card (${money(g.DIRECTORY_FEE)}/year).</div>`}
     <h3>Your bids</h3>${bids.length ? bids.map(L => { const cb = g.currentBid(L); return lotRow(L).replace('</div></div><button', `</div><div class="ln ${cb.leader === 'P' ? 'ok' : 'warn'}">${cb.leader === 'P' ? 'You’re high bidder' : 'You’ve been outbid'} (your max ${money(L.playerMax)})</div></div><button`); }).join('') : '<div class="empty">No open bids.</div>'}`;
   }
-  const typeOf = L => L.kind === 'embryo' ? 'embryo' : g.lotType(s.animals[L.aid]);
-  const lots = s.listings.filter(l => l.seller !== 'P' && (l.kind === 'embryo' || s.animals[l.aid])).filter(L => UI.mfilter === 'all' || typeOf(L) === UI.mfilter).sort((a, b) => a.end - b.end);
-  const chip = (k, l) => `<button class="chip ${UI.mfilter === k ? 'on' : ''}" data-act="mfilter" data-v="${k}">${l}</button>`;
-  return `<h2>Market</h2>${seg}<div class="chips">${chip('all', 'All')}${chip('lamb', 'Show lambs')}${chip('ewe', 'Ewes')}${chip('ram', 'Rams')}${chip('embryo', 'Embryos')}</div>
-  ${lots.length ? `<div class="cards">${lots.map(L => {
-    const cb = g.currentBid(L);
-    const status = L.playerMax ? (cb.leader === 'P' ? '<span class="b str">You lead</span>' : '<span class="b bad">Outbid</span>') : '';
-    const priceLine = L.mode === 'auction' ? `${money(cb.price)} · ${cb.count} bid${cb.count === 1 ? '' : 's'} · closes ${g.fmtShort(L.end)}` : `Buy now ${money(L.price)}`;
-    if (L.kind === 'embryo') return `<button class="card" data-act="lot" data-id="${L.id}"><div class="pic">${sheep(L.emb.dam, 58)}</div><div class="grow"><div class="nm">${L.emb.count} embryos — ${esc(L.emb.sire.name)} × ${esc(L.emb.dam.name)}</div><div class="ln">${esc(g.breedLabel(L.emb.dam))} · ${esc(g.flockName(L.seller))} (${g.flock(L.seller)?.state || ''})</div><div class="ln"><b>${priceLine}</b></div><div class="badges">${status}</div></div></button>`;
-    const a = s.animals[L.aid];
-    return `<button class="card" data-act="lot" data-id="${L.id}"><div class="pic">${sheep(a, 62)}</div><div class="grow"><div class="nm">${esc(a.name)}</div><div class="ln">${esc(g.breedLabel(a))} · ${g.sexText(a)} · ${g.ageText(a)} · ${Math.round(a.wt)} lb</div><div class="ln">${esc(g.flockName(L.seller))} (${g.flock(L.seller)?.state || ''}) ${stars(L.seller)}</div><div class="ln"><b>${priceLine}</b></div><div class="badges">${a.reg ? '<span class="b reg">Reg</span>' : ''}${status}</div></div></button>`;
-  }).join('')}</div>` : '<div class="empty">Nothing on the market in this category right now. Sales pick up in season: show lambs Feb–May and Aug–Oct, rams Jun–Sep, bred ewes Oct–Jan.</div>'}`;
+  const all = marketItems();
+  const counts = {}; all.forEach(it => counts[it.cat] = (counts[it.cat] || 0) + 1);
+  let items = UI.mfilter === 'all' ? all : all.filter(it => it.cat === UI.mfilter);
+  const breeds = [...new Set(items.map(it => it.breed))].sort();
+  if (UI.mbreed && !breeds.includes(UI.mbreed)) UI.mbreed = '';
+  if (UI.mbreed) items = items.filter(it => it.breed === UI.mbreed);
+  const sort = UI.msort || 'end';
+  items.sort((a, b) => sort === 'low' ? a.price - b.price : sort === 'high' ? b.price - a.price : sort === 'best' ? b.q - a.q : a.end - b.end);
+  const chip = (k, l) => `<button class="chip ${UI.mfilter === k ? 'on' : ''}" data-act="mfilter" data-v="${k}">${l}${k === 'all' ? ` ${all.length}` : counts[k] ? ` ${counts[k]}` : ''}</button>`;
+  const breedName = b => b === 'Crossbred' ? 'Crossbred (club)' : b;
+  return `<h2>Market</h2>${seg}<div class="chips">${CATS.map(([k, l]) => chip(k, l)).join('')}</div>
+  <div class="filters"><select data-on="mbreed"><option value="">All breeds</option>${breeds.map(b => `<option value="${esc(b)}" ${UI.mbreed === b ? 'selected' : ''}>${esc(breedName(b))}</option>`).join('')}</select>
+  <select data-on="msort">${[['end', 'Ending soon'], ['low', 'Price: low → high'], ['high', 'Price: high → low'], ['best', 'Best quality']].map(([k, l]) => `<option value="${k}" ${sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+  <p class="sub" style="margin:0 2px 8px">${items.length} for sale · Bred ewes, semen and embryos sell year-round. Show prospects peak Feb–Jun and Aug–Oct; rams Jun–Sep.</p>
+  ${items.length ? `<div class="cards">${items.slice(0, 120).map(it => it.cat === 'semen' ? semenCard(it.d) : lotCard(it)).join('')}</div>` : '<div class="empty">Nothing in this category right now — check back in a few days.</div>'}`;
 }
 
 function viewNews() {
@@ -208,7 +235,16 @@ function viewNews() {
 
 function viewMore() {
   const s = S();
-  const seg = `<div class="seg">${[['leaders', 'Leaders'], ['ach', 'Awards'], ['ledger', 'Ledger'], ['settings', 'Settings']].map(([k, l]) => `<button class="${UI.more === k ? 'on' : ''}" data-act="more" data-v="${k}">${l}</button>`).join('')}</div>`;
+  const seg = `<div class="chips">${[['leaders', 'Leaders'], ['farms', 'Farms'], ['ach', 'Awards'], ['ledger', 'Ledger'], ['settings', 'Settings']].map(([k, l]) => `<button class="chip ${UI.more === k ? 'on' : ''}" data-act="more" data-v="${k}">${l}</button>`).join('')}</div>`;
+  if (UI.more === 'farms') {
+    const counts = {}; s.flocks.forEach(f => { if (f.id !== 'P') counts[f.state] = (counts[f.state] || 0) + 1; });
+    const st = UI.fstate || s.home;
+    const heads = {}; for (const a of g.living()) heads[a.owner] = (heads[a.owner] || 0) + 1;
+    const list = s.flocks.filter(f => f.id !== 'P' && f.state === st).sort((a, b) => (b.banners || 0) - (a.banners || 0) || a.name.localeCompare(b.name));
+    return `<h2>Farms</h2>${seg}<label class="f" style="margin-top:0">State</label><select data-on="fstate">${Object.entries(STATES).sort((a, b) => a[1].localeCompare(b[1])).map(([k, v]) => `<option value="${k}" ${st === k ? 'selected' : ''}>${v} (${counts[k] || 0})</option>`).join('')}</select>
+    <p class="sub">${list.length} flock${list.length === 1 ? '' : 's'} in ${esc(STATES[st])}${st === s.home ? ' — your home state' : ''}.</p>
+    ${list.length ? `<div class="cards">${list.map(f => `<button class="card" data-act="flock" data-id="${f.id}"><div class="grow"><div class="nm">${esc(f.name)}</div><div class="ln">${f.type === 'breed' ? `Registered ${esc(f.breed)}s` : f.wt ? `Club lambs · ${esc(f.wt)}` : 'Club lambs'} · ${heads[f.id] || 0} head</div><div class="ln">${stars(f.id)} · ${f.banners || 0} banners · since ${g.yearOf(f.founded) <= 2026 ? 'before 2026' : g.yearOf(f.founded)}</div></div></button>`).join('')}</div>` : '<div class="empty">No flocks here yet — new ones start up every month.</div>'}`;
+  }
   if (UI.more === 'ach') {
     const got = ACHIEVEMENTS.filter(a => s.ach[a.id] != null).length;
     return `<h2>Achievements</h2>${seg}<p class="sub">${got} of ${ACHIEVEMENTS.length} earned</p>${ACHIEVEMENTS.map(a => `<div class="ach ${s.ach[a.id] == null ? 'locked' : ''}"><div class="ic">${s.ach[a.id] != null ? '✓' : '?'}</div><div class="grow"><div class="nm" style="font-weight:700">${esc(a.name)}</div><div class="sub">${esc(a.desc)}${s.ach[a.id] != null ? ` · earned ${g.fmtShort(s.ach[a.id])}` : ''}</div></div><div class="price">${money(a.cash)}</div></div>`).join('')}`;
@@ -238,6 +274,17 @@ function viewMore() {
 }
 
 // ---------- animal detail ----------
+function pedigree(a) {
+  const root = a.ped || { s: a.sireName && a.sireName !== 'Unrecorded' ? { n: a.sireName } : null, d: a.damName && a.damName !== 'Unrecorded' ? { n: a.damName } : null };
+  const cell = (p, row, span, col, role) => `<div class="pc ${role}" style="grid-row:${row}/span ${span};grid-column:${col}"><span class="pr">${role === 's' ? 'Sire' : 'Dam'}</span><b>${p ? esc(p.n) : '—'}</b>${p?.b ? `<small>${esc(p.b)}</small>` : ''}</div>`;
+  let h = '';
+  const walk = (p, row, span, col, role) => {
+    h += cell(p, row, span, col, role);
+    if (col < 3) { walk(p?.s, row, span / 2, col + 1, 's'); walk(p?.d, row + span / 2, span / 2, col + 1, 'd'); }
+  };
+  walk(root.s, 1, 4, 1, 's'); walk(root.d, 5, 4, 1, 'd');
+  return `<div class="ped"><div class="ph" style="grid-column:1">Parents</div><div class="ph" style="grid-column:2">Grandparents</div><div class="ph" style="grid-column:3">Great-grand</div><div class="pg">${h}</div></div>`;
+}
 function animalBody(a, { mine = false } = {}) {
   const s = S(); const age = g.ageDays(a);
   const ts = g.traitScores(a);
@@ -247,12 +294,14 @@ function animalBody(a, { mine = false } = {}) {
   const tested = a.tested || {};
   const sp = tested.spider ? ['Normal (NN)', 'Carrier (NS)', 'Affected (SS)'][a.spider] : 'Untested';
   const sc = tested.scrapie ? a.scr.replace('RQ', 'QR') : 'Untested';
-  const tests = `<h3>DNA tests</h3><div class="kv"><div><span>Spider gene</span><b class="${tested.spider && a.spider ? 'neg2' : ''}">${sp}</b></div><div><span>Scrapie codon 171</span><b>${sc}</b></div></div>${mine && live ? `<div class="btns">${!tested.spider ? '<button class="btn sm sec" data-act="test" data-k="spider" data-id="' + a.id + '">Spider test $35</button>' : ''}${!tested.scrapie ? '<button class="btn sm sec" data-act="test" data-k="scrapie" data-id="' + a.id + '">Scrapie test $30</button>' : ''}</div>` : ''}`;
+  const dw = tested.dwarf ? g.DWARF_LABEL[a.dwarf || 0] : 'Untested';
+  const tb = (k, l, c) => !tested[k] ? `<button class="btn sm sec" data-act="test" data-k="${k}" data-id="${a.id}">${l} $${c}</button>` : '';
+  const tests = `<h3>DNA tests</h3><div class="kv"><div><span>Spider</span><b class="${tested.spider && a.spider ? 'neg2' : ''}">${sp}</b></div><div><span>Scrapie 171</span><b>${sc}</b></div><div><span>Dwarf</span><b class="${tested.dwarf && a.dwarf === 2 ? 'neg2' : ''}">${dw}</b></div></div>${mine && live ? `<div class="btns">${tb('spider', 'Spider', 35)}${tb('scrapie', 'Scrapie', 30)}${tb('dwarf', 'Dwarf', 35)}</div>` : ''}${a.breed === 'Southdown' || a.breed === 'Wether-Type Southdown' ? '<p class="sub">Southdowns are scrapie-resistant (RR) breed-wide.</p>' : ''}`;
   const info = live ? `<div class="kv"><div><span>Breed</span>${esc(g.breedLabel(a))}</div><div><span>Sex</span>${g.sexText(a)}</div><div><span>Age</span>${g.ageText(a)}</div><div><span>Born</span>${g.fmtDate(a.birth)}</div><div><span>Weight</span>${Math.round(a.wt)} lb</div>
     ${age < 450 ? `<div><span>Gain</span>${(a.lastAdg || 0).toFixed(2)} lb/day</div><div><span>Condition</span>${condLabel(a.cond)} (${a.cond.toFixed(1)})</div>` : ''}
-    <div><span>Registered</span>${a.reg ? 'Yes' : 'No'}</div><div><span>Inbreeding</span>${((a.F || 0) * 100).toFixed(1)}%</div>
+    <div><span>Registered</span>${a.reg ? 'Yes' : a.regOk && a.sex !== 'W' ? (mine ? `<button class="btn sm gold" data-act="register" data-id="${a.id}">Register $${g.REG_FEE}</button>` : 'Eligible') : 'No'}</div><div><span>Inbreeding</span>${((a.F || 0) * 100).toFixed(1)}%</div>
     ${a.comp && a.breed === 'Crossbred' ? `<div style="grid-column:1/-1"><span>Cross</span>${esc(a.comp)}</div>` : ''}</div>` : `<div class="kv"><div><span>Breed</span>${esc(g.breedLabel(a))}</div><div><span>Owner</span>${esc(a.ownerName || '')}</div></div>`;
-  const ped = live ? `<h3>Pedigree</h3><div class="kv"><div><span>Sire</span>${esc(a.sireName)}</div><div><span>Dam</span>${esc(a.damName)}</div>${a.et ? `<div style="grid-column:1/-1"><span>Embryo transfer</span>carried by ${esc(a.recipName || '')}</div>` : ''}</div>` : '';
+  const ped = `<h3>Pedigree</h3>${pedigree(a)}${a.et ? `<p class="sub">Embryo transfer — carried by ${esc(a.recipName || '')}</p>` : ''}`;
   const rec = (a.record || []).length ? `<h3>Show record</h3>${[...a.record].reverse().map(r => `<div class="row" style="padding:4px 0;border-bottom:1px solid var(--line)">${r.banner ? '<span class="b ban">Banner</span>' : ''}<div class="grow" style="font-size:13.5px">${esc(r.text)}</div><span class="sub">${esc(r.show)} '${String(g.yearOf(r.day)).slice(2)}</span></div>`).join('')}` : '';
   return `<div class="hero">${sheep(a, 230)}<div class="tagline">${esc(a.tag || '')}</div><div class="badges" style="justify-content:center">${live ? badges(a) : ''}</div></div>
   ${info}${ped}<h3>Trait scores</h3>${traitBars}<p class="sub">Market index ${g.marketIndex(a).toFixed(1)} · Breeding index ${g.breedingIndex(a).toFixed(1)}</p>${epd}${tests}${rec}`;
@@ -294,6 +343,15 @@ function sheetAnimal(id) {
   ${animalBody(a, { mine })}${mine ? careBlock(a) : ''}<h3>${mine ? 'Actions' : 'Owner'}</h3>${actions}${mine ? `<p class="sub">Estimated market value about ${money(g.fairValue(a) * g.repMult('P'))}.</p>` : ''}`;
 }
 
+function sheetFlock(fid) {
+  const s = S(); const f = g.flock(fid); if (!f) return '';
+  const mine = g.living().filter(a => a.owner === fid);
+  const grp = (t, list) => list.length ? `<h3>${t} (${list.length})</h3><div class="cards">${list.map(a => animalCard(a)).join('')}</div>` : '';
+  const age = g.ageDays;
+  return `<div class="sheet-head"><h2>${esc(f.name)}</h2><button class="x" data-act="close">×</button></div>
+  <div class="kv"><div><span>State</span>${esc(STATES[f.state])}</div><div><span>Program</span>${f.type === 'breed' ? `${esc(f.breed)} breeder` : f.wt ? `Club · ${esc(f.wt)}` : 'Club lambs'}</div><div><span>Banners</span>${f.banners || 0}</div><div><span>Reputation</span>${stars(fid)}</div><div><span>Lambing</span>${{ early: 'Dec', winter: 'Jan–Feb', late: 'Mar', fall: 'Aug–Sep' }[f.season || (f.fall ? 'fall' : 'winter')]}</div><div><span>Head</span>${mine.length}</div></div>
+  ${grp('Rams', mine.filter(a => a.sex === 'R' && age(a) >= 365))}${grp('Ewes', mine.filter(a => a.sex === 'E' && age(a) >= 365))}${grp('Lambs', mine.filter(a => age(a) < 365).sort((a, b) => a.birth - b.birth))}${grp('Wethers', mine.filter(a => a.sex === 'W' && age(a) >= 365))}`;
+}
 function sheetBreed(id) {
   const s = S(); const e = s.animals[id];
   const mine = g.myAnimals();
@@ -384,8 +442,8 @@ function sheetSnap(dirId) {
 }
 
 function sheetEnter(key) {
-  const s = S(); const sh = g.upcomingShows(30).find(x => x.key === key);
-  if (!sh) return `<div class="sheet-head"><h2>Closed</h2><button class="x" data-act="close">×</button></div><p>Entries for this show have closed.</p>`;
+  const s = S(); const sh = g.findShow(key);
+  if (!sh || sh.day <= s.day) return `<div class="sheet-head"><h2>Closed</h2><button class="x" data-act="close">×</button></div><p>Entries for this show have closed.</p>`;
   const e = s.entries[key] || { market: [], breeding: [] };
   const sel = UI.enter || (UI.enter = { key, market: new Set(), breeding: new Set() });
   const days = sh.day - s.day;
@@ -441,7 +499,7 @@ function renderSheet() {
   el.innerHTML = `<div class="inner">${UI.sheet()}</div>`; el.classList.remove('hidden'); document.body.style.overflow = 'hidden';
   if (inner) el.querySelector('.inner').scrollTop = st;
 }
-function closeSheet() { UI.sheet = null; UI.enter = null; renderSheet(); }
+function closeSheet() { UI.sheet = null; UI.enter = null; UI.sheetFlock = null; renderSheet(); }
 function refreshAll() { render(); if (UI.sheet) renderSheet(); }
 
 // ---------- setup wizard ----------
@@ -454,7 +512,15 @@ function renderSetup() {
     <label class="f">Home state</label><select id="hs"><option value="">Choose your state…</option>${Object.entries(STATES).sort((a, b) => a[1].localeCompare(b[1])).map(([k, v]) => `<option value="${k}" ${st.home === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
     <label class="f">Home county (for your county fair — optional)</label><input type="text" id="cn" value="${esc(st.county)}" placeholder="e.g. Shelby" maxlength="24">
     <div class="note">Your home state sets your state fair, county fair and local jackpots. The national shows — Denver, Fort Worth, San Antonio, Houston, Keystone and NAILE — are open to everyone. 150 flocks across the country start alongside you, and more join every month.</div>
-    <div class="foot"><div class="grow sub">Step 1 of 3</div><button class="btn" data-act="setup1">Next</button></div></div>`;
+    <div class="foot"><div class="grow sub">Step 1 of 4</div><button class="btn" data-act="setup1">Next</button></div></div>`;
+  } else if (st.step === 4) {
+    const chosen = [...st.opts.ewes.filter(a => st.ewes.includes(a.id)), st.opts.rams.find(a => a.id === st.ram)];
+    const tagOK = new Set([chosen[0].id, chosen[1].id, chosen[4].id]);
+    h = `<div class="setup"><h1>Name your sheep</h1><p class="sub">Give each one a name. You can set your own ear tag numbers on two ewes and your ram; the others keep the flock tags.</p>
+    ${chosen.map(a => `<div class="panel"><div class="row"><div class="pic" style="width:80px;flex:none">${sheep(a, 78)}</div><div class="grow"><b>${esc(g.breedLabel(a))} ${a.sex === 'R' ? 'ram' : 'ewe'}</b><div class="sub">${g.ageText(a)} · ${Math.round(a.wt)} lb</div></div></div>
+      <label class="f">Name</label><input type="text" data-nm="${a.id}" value="${esc(a.name)}" maxlength="30">
+      ${tagOK.has(a.id) ? `<label class="f">Ear tag # ${a.sex === 'R' ? '(ram)' : ''}</label><input type="text" data-tg="${a.id}" value="${esc(a.tag)}" maxlength="14">` : `<p class="sub" style="margin:8px 0 0">Tag ${esc(a.tag)}</p>`}</div>`).join('')}
+    <div class="foot"><button class="btn sec" data-act="setupback">Back</button><div class="grow sub">Step 4 of 4</div><button class="btn" data-act="setup4">Start my flock</button></div></div>`;
   } else {
     const opts = st.opts;
     const isEwe = st.step === 2;
@@ -462,7 +528,7 @@ function renderSetup() {
     const chosen = id => isEwe ? st.ewes.includes(id) : st.ram === id;
     h = `<div class="setup"><h1>${isEwe ? 'Pick 4 ewes' : 'Pick your ram'}</h1><p class="sub">${isEwe ? 'These are your foundation females. Crossbred blackface ewes raise club lambs; registered purebreds can show in breeding classes and carry EPDs.' : 'He’ll sire your first lamb crop. You can always buy semen from the sire directory later.'}</p>
     <div class="pickgrid">${list.map(a => { const ts = g.traitScores(a); return `<button class="pickc ${chosen(a.id) ? 'on' : ''}" data-act="pick" data-id="${a.id}"><div class="pic">${sheep(a, 130)}</div><div style="font-weight:700;margin-top:4px">${esc(g.breedLabel(a))}</div><div class="sub">${g.ageText(a)} · ${Math.round(a.wt)} lb ${a.reg ? '· Reg' : ''}</div><div class="mini"><span>MUS <b>${ts.muscle}</b></span><span>DIM <b>${ts.dimension}</b></span><span>BAL <b>${ts.balance}</b></span><span>STR <b>${ts.structure}</b></span><span>BONE <b>${ts.bone}</b></span><span>LOOK <b>${ts.look}</b></span></div>${a.reg ? `<div class="mini" style="grid-template-columns:1fr 1fr"><span>WW <b>${signed(g.epdShown(a, 'WW'), 1)}</b></span><span>NLB <b>${signed(g.epdShown(a, 'NLB'), 1)}</b></span></div>` : ''}</button>`; }).join('')}</div>
-    <div class="foot"><button class="btn sec" data-act="setupback">Back</button><div class="grow sub">${isEwe ? `${st.ewes.length} of 4 chosen` : st.ram ? '1 ram chosen' : 'Choose 1 ram'} · Step ${st.step} of 3</div><button class="btn" data-act="${isEwe ? 'setup2' : 'setup3'}" ${isEwe ? (st.ewes.length === 4 ? '' : 'disabled') : (st.ram ? '' : 'disabled')}>${isEwe ? 'Next' : 'Start my flock'}</button></div></div>`;
+    <div class="foot"><button class="btn sec" data-act="setupback">Back</button><div class="grow sub">${isEwe ? `${st.ewes.length} of 4 chosen` : st.ram ? '1 ram chosen' : 'Choose 1 ram'} · Step ${st.step} of 4</div><button class="btn" data-act="${isEwe ? 'setup2' : 'setup3'}" ${isEwe ? (st.ewes.length === 4 ? '' : 'disabled') : (st.ram ? '' : 'disabled')}>Next</button></div></div>`;
   }
   app.innerHTML = h;
 }
@@ -472,17 +538,19 @@ const A = {
   tab: el => { UI.tab = el.dataset.tab; window.scrollTo(0, 0); render(); },
   filter: el => { UI.filter = el.dataset.v; render(); },
   mtab: el => { UI.mtab = el.dataset.v; render(); },
-  mfilter: el => { UI.mfilter = el.dataset.v; render(); },
+  mfilter: el => { UI.mfilter = el.dataset.v; UI.mbreed = ''; render(); },
   stab: el => { UI.stab = el.dataset.v; render(); },
+  sfilter: el => { UI.sfilter = el.dataset.v; render(); },
   ntab: el => { UI.ntab = el.dataset.v; render(); },
   more: el => { UI.more = el.dataset.v; render(); },
-  gosires: () => { closeSheet(); UI.tab = 'market'; UI.mtab = 'sires'; render(); },
+  gosires: () => { closeSheet(); UI.tab = 'market'; UI.mtab = 'browse'; UI.mfilter = 'semen'; render(); },
   play: () => { const s = S(); s.paused = !s.paused; lastTick = performance.now(); save(); renderHeader(); },
   speed: () => { const s = S(); const i = SPEEDS.findIndex(x => x[0] === s.settings.speed); s.settings.speed = SPEEDS[(i + 1) % SPEEDS.length][0]; flash(SPEEDS[(i + 1) % SPEEDS.length][2]); save(); renderHeader(); },
   adv: el => { const n = +el.dataset.n; const ran = g.advance(n); if (ran < n) flash('Stopped early — something needs your attention.', 'show'); drainToasts(); save(); refreshAll(); },
-  animal: el => openSheet(() => sheetAnimal(el.dataset.id)),
+  animal: el => { const prev = UI.sheet && UI.sheetFlock; UI.backFlock = prev || null; openSheet(() => sheetAnimal(el.dataset.id)); },
+  flock: el => { UI.sheetFlock = el.dataset.id; openSheet(() => sheetFlock(el.dataset.id)); },
   back: el => openSheet(() => sheetAnimal(el.dataset.id)),
-  close: () => { closeSheet(); render(); },
+  close: () => { if (UI.backFlock && UI.sheet) { const f = UI.backFlock; UI.backFlock = null; UI.sheetFlock = f; openSheet(() => sheetFlock(f)); return; } UI.sheetFlock = null; closeSheet(); render(); },
   breedsheet: el => { UI.btab = S().tank.length && !g.myAnimals().some(a => a.sex === 'R' && g.ageDays(a) >= 200) ? 'ai' : 'natural'; openSheet(() => sheetBreed(el.dataset.id)); },
   btab: el => { UI.btab = el.dataset.v; renderSheet(); },
   donat: el => { if (result(g.breedNatural(el.dataset.id, el.dataset.r), 'Turned in with the ram.')) closeSheet(); },
@@ -495,6 +563,7 @@ const A = {
   dosellemb: el => { if (result(g.listEmbryos(el.dataset.id, +$('#ec').value, 'auction', +$('#sp').value, +$('#sd').value), 'Embryo lot listed.')) closeSheet(); },
   wether: el => { g.wether(el.dataset.id); result(null, 'Wethered.'); },
   test: el => result(g.testAnimal(el.dataset.id, el.dataset.k), 'Test results are in.'),
+  register: el => result(g.register(el.dataset.id), 'Registered!'),
   siresheet: el => openSheet(() => sheetSire(el.dataset.id)),
   dosire: el => { if (result(g.listSire(el.dataset.id, +$('#sp').value), 'Listed in the sire directory.')) openSheet(() => sheetAnimal(el.dataset.id)); },
   unlist: el => { g.unlistSire(el.dataset.id); result(null, 'Removed from the directory.'); },
@@ -512,7 +581,7 @@ const A = {
   buysemen: el => { const q = +(document.querySelector(`select[data-id="${el.dataset.id}"]`)?.value || 1); result(g.buySemen(el.dataset.id, q), `${q} straw${q > 1 ? 's' : ''} in your tank.`); },
   entersheet: el => { UI.enter = null; openSheet(() => sheetEnter(el.dataset.key)); },
   doenter: el => {
-    const key = el.dataset.key; const sh = g.upcomingShows(30).find(x => x.key === key); const sel = UI.enter;
+    const key = el.dataset.key; const sh = g.findShow(key); const sel = UI.enter;
     let err = null;
     if (sel.market.size) err = g.enterShow(sh, [...sel.market], 'market');
     if (!err && sel.breeding.size) err = g.enterShow(sh, [...sel.breeding], 'breeding');
@@ -546,8 +615,12 @@ const A = {
     const y = window.scrollY; renderSetup(); window.scrollTo(0, y);
   },
   setup2: () => { UI.setup.step = 3; window.scrollTo(0, 0); renderSetup(); },
-  setup3: () => {
+  setup3: () => { UI.setup.step = 4; window.scrollTo(0, 0); renderSetup(); },
+  setup4: () => {
     const st = UI.setup;
+    const all = [...st.opts.ewes, ...st.opts.rams];
+    document.querySelectorAll('[data-nm]').forEach(i => { const a = all.find(x => x.id === i.dataset.nm); if (a && i.value.trim()) a.name = i.value.trim().slice(0, 30); });
+    document.querySelectorAll('[data-tg]').forEach(i => { const a = all.find(x => x.id === i.dataset.tg); if (a && i.value.trim()) a.tag = i.value.trim().slice(0, 14); });
     app.innerHTML = '<div class="setup"><h1>Building the country…</h1><p class="sub">Stocking 150 flocks across the U.S.</p></div>';
     setTimeout(() => {
       const ewes = st.opts.ewes.filter(a => st.ewes.includes(a.id)); const ram = st.opts.rams.find(a => a.id === st.ram);
@@ -577,6 +650,9 @@ const ON = {
     f.text().then(t => { const s = JSON.parse(t); if (!s.flocks || !s.animals) throw new Error('bad file'); s.toasts = []; s.paused = true; g.G.s = s; save(true); UI.tab = 'barn'; render(); flash('Backup restored.', 'show'); }).catch(() => alert('That file isn’t a ShowLamb backup.'));
   },
   qty: () => { },
+  mbreed: el => { UI.mbreed = el.value; render(); },
+  fstate: el => { UI.fstate = el.value; render(); },
+  msort: el => { UI.msort = el.value; render(); },
 };
 document.addEventListener('input', e => { const el = e.target.closest('[data-on]'); if (el && el.dataset.on === 'care' && el.dataset.k === 'lbs') ON.care(el); });
 document.addEventListener('change', e => { const el = e.target.closest('[data-on]'); if (!el) return; if (el.dataset.on === 'care' && el.dataset.k === 'lbs') return; const f = ON[el.dataset.on]; if (f) f(el); });
@@ -603,4 +679,7 @@ window.addEventListener('pagehide', () => save(true));
   render();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { });
 })();
+// keep the layout locked on phones: block pinch and double-tap zoom
+['gesturestart', 'gesturechange', 'gestureend'].forEach(ev => document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+document.addEventListener('touchmove', e => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
 window.__showlamb = { g, UI, render };

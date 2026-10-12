@@ -18,7 +18,7 @@ export const EPDS = [
 // face: black | white | brown | colored ; colors: fleece/head/legs ; pattern: optional head/leg pattern id
 // t = trait offsets from 50 [muscle, dimension, balance, structure, bone, look]; frame = ideal finish weight (lb)
 // spider = carrier frequency ; rr = RR allele frequency (scrapie codon 171)
-const B = (name, face, fleece, head, legs, t, frame, extra = {}) => ({ name, face, fleece, head, legs, t, frame, spider: 0, rr: 0.55, prolific: 1.6, ...extra });
+const B = (name, face, fleece, head, legs, t, frame, extra = {}) => ({ name, face, fleece, head, legs, t, frame, spider: 0, dwarf: 0, rr: 0.55, prolific: 1.6, ...extra });
 export const BREEDS = {
   'Border Leicester': B('Border Leicester', 'white', '#f3eee2', '#f9f7f2', '#f9f7f2', [-4, -4, 2, 3, 1, 1], 145, { prolific: 1.8 }),
   'Cheviot': B('Cheviot', 'white', '#f4f0e6', '#fbfaf6', '#fbfaf6', [-1, 0, 2, 2, -2, 3], 112),
@@ -45,17 +45,26 @@ export const BREEDS = {
   'Texel': B('Texel', 'white', '#f6f2e8', '#fbfaf6', '#fbfaf6', [9, 7, 0, 0, 2, 0], 130),
   'Tunis': B('Tunis', 'brown', '#efe4cf', '#a35a32', '#a35a32', [0, 1, 1, 1, 0, 1], 130),
   'White Dorper': B('White Dorper', 'white', '#fbfaf6', '#fbfaf6', '#fbfaf6', [4, 6, 0, -1, 2, 0], 125, { prolific: 1.5 }),
+  // wether-type / club-type purebreds — market lambs, scored on traits only (no EPDs)
+  'Wether-Type Dorper': B('Wether-Type Dorper', 'black', '#fbfaf6', '#151515', '#fbfaf6', [6, 7, 1, 0, 3, 2], 130, { reg: false, wt: true, prolific: 1.5 }),
+  'Wether-Type Dorset': B('Wether-Type Dorset', 'white', '#fbfaf6', '#f3eee4', '#f3eee4', [5, 5, 4, 3, 2, 4], 138, { reg: false, wt: true, prolific: 1.7 }),
+  'Wether-Type Hampshire': B('Wether-Type Hampshire', 'black', '#efe9dc', '#2e211b', '#2e211b', [8, 8, 2, 1, 5, 3], 146, { reg: false, wt: true, spider: 0.02 }),
+  'Wether-Type Oxford': B('Wether-Type Oxford', 'brown', '#efe9dc', '#6b4a33', '#6b4a33', [6, 6, 2, 2, 5, 2], 146, { reg: false, wt: true }),
+  'Wether-Type Shropshire': B('Wether-Type Shropshire', 'black', '#efe8d9', '#3a2c25', '#3a2c25', [6, 6, 3, 2, 2, 4], 134, { reg: false, wt: true }),
+  'Wether-Type Suffolk': B('Wether-Type Suffolk', 'black', '#f4efe6', '#111111', '#111111', [7, 7, 2, 2, 5, 3], 148, { reg: false, wt: true, spider: 0.02 }),
   // non-registered
   'Commercial': B('Commercial', 'white', '#f2ede2', '#f8f5ee', '#f8f5ee', [0, 0, 1, 1, 0, 0], 140, { reg: false, prolific: 1.7 }),
   'Crossbred': B('Crossbred', 'black', '#f2ede2', '#151515', '#151515', [5, 5, 2, 1, 4, 3], 140, { reg: false }),
 };
+export const WT_BREEDS = Object.keys(BREEDS).filter(b => b.startsWith('Wether-Type '));
+export const baseBreed = b => b.startsWith('Wether-Type ') ? b.slice(12) : b;
 export const REG_BREEDS = Object.keys(BREEDS).filter(b => BREEDS[b].reg !== false);
 
 export const MARKET_CLASSES = ['Blackface Cross', 'Whiteface Cross', 'Dorper', 'Dorset', 'Hampshire', 'Oxford', 'Shropshire', 'Southdown', 'Suffolk', 'AOB'];
 export function marketClassOf(a) {
   if (a.breed === 'Crossbred' || a.breed === 'Commercial') return a.face === 'white' ? 'Whiteface Cross' : 'Blackface Cross';
   if (a.breed === 'White Dorper') return 'Dorper';
-  if (a.breed === 'Wether-Type Southdown') return 'Southdown';
+  if (a.breed.startsWith('Wether-Type ')) { const b = a.breed.slice(12); return MARKET_CLASSES.includes(b) ? b : 'AOB'; }
   return MARKET_CLASSES.includes(a.breed) ? a.breed : 'AOB';
 }
 
@@ -110,9 +119,6 @@ export function homeShows(st, county) {
   const sname = STATES[st];
   const sf = stateFairOf(st);
   return [
-    { id: 'jack1', name: `${sname} Spring Classic Jackpot`, short: 'Spring Classic', m: 3, d: 18, tier: 'jackpot', breeding: false, minWt: 95, maxWt: 165, fee: 30, home: true },
-    { id: 'jack2', name: `${sname} Showcase Jackpot`, short: 'Showcase', m: 4, d: 16, tier: 'jackpot', breeding: false, minWt: 95, maxWt: 165, fee: 30, home: true },
-    { id: 'jack3', name: `Summer Slam Jackpot (${st})`, short: 'Summer Slam', m: 5, d: 13, tier: 'jackpot', breeding: false, minWt: 95, maxWt: 165, fee: 35, home: true },
     { id: 'county', name: county ? `${county} County Fair` : 'Home County Fair', short: county ? `${county} Co.` : 'County Fair', m: 6, d: 14, tier: 'county', breeding: true, minWt: 90, maxWt: 165, fee: 10, home: true },
     { id: 'statefair', name: sf.name, short: sf.name.replace(/State Fair( of)?/, 'SF').trim(), m: sf.m, d: sf.d, tier: 'state', breeding: true, minWt: 100, maxWt: 160, fee: 25, home: true },
   ];
@@ -160,3 +166,40 @@ export const ACHIEVEMENTS = [
   { id: 'banners_25', name: 'Banner Wall', desc: 'Win 25 banners', cash: 2500 },
   { id: 'triplets', name: 'Three of a Kind', desc: 'A ewe of yours has triplets', cash: 200 },
 ];
+
+// ---------- regions & jackpots ----------
+export const NEIGHBORS = {
+  AL: ['MS', 'TN', 'GA', 'FL'], AK: ['WA'], AZ: ['CA', 'NV', 'UT', 'NM', 'CO'], AR: ['MO', 'TN', 'MS', 'LA', 'TX', 'OK'], CA: ['OR', 'NV', 'AZ'],
+  CO: ['WY', 'NE', 'KS', 'OK', 'NM', 'UT', 'AZ'], CT: ['NY', 'MA', 'RI'], DE: ['MD', 'PA', 'NJ'], FL: ['GA', 'AL'], GA: ['FL', 'AL', 'TN', 'NC', 'SC'],
+  HI: ['CA'], ID: ['WA', 'OR', 'NV', 'UT', 'WY', 'MT'], IL: ['WI', 'IA', 'MO', 'KY', 'IN'], IN: ['IL', 'MI', 'OH', 'KY'], IA: ['MN', 'WI', 'IL', 'MO', 'NE', 'SD'],
+  KS: ['NE', 'MO', 'OK', 'CO'], KY: ['IN', 'OH', 'WV', 'VA', 'TN', 'MO', 'IL'], LA: ['TX', 'AR', 'MS'], ME: ['NH'], MD: ['PA', 'DE', 'VA', 'WV'],
+  MA: ['NH', 'VT', 'NY', 'CT', 'RI'], MI: ['OH', 'IN', 'WI'], MN: ['ND', 'SD', 'IA', 'WI'], MS: ['LA', 'AR', 'TN', 'AL'], MO: ['IA', 'IL', 'KY', 'TN', 'AR', 'OK', 'KS', 'NE'],
+  MT: ['ND', 'SD', 'WY', 'ID'], NE: ['SD', 'IA', 'MO', 'KS', 'CO', 'WY'], NV: ['OR', 'ID', 'UT', 'AZ', 'CA'], NH: ['VT', 'ME', 'MA'], NJ: ['NY', 'PA', 'DE'],
+  NM: ['AZ', 'UT', 'CO', 'OK', 'TX'], NY: ['VT', 'MA', 'CT', 'NJ', 'PA'], NC: ['VA', 'TN', 'GA', 'SC'], ND: ['MN', 'SD', 'MT'], OH: ['MI', 'IN', 'KY', 'WV', 'PA'],
+  OK: ['KS', 'MO', 'AR', 'TX', 'NM', 'CO'], OR: ['WA', 'ID', 'NV', 'CA'], PA: ['NY', 'NJ', 'DE', 'MD', 'WV', 'OH'], RI: ['CT', 'MA'], SC: ['NC', 'GA'],
+  SD: ['ND', 'MN', 'IA', 'NE', 'WY', 'MT'], TN: ['KY', 'VA', 'NC', 'GA', 'AL', 'MS', 'AR', 'MO'], TX: ['NM', 'OK', 'AR', 'LA'], UT: ['ID', 'WY', 'CO', 'NM', 'AZ', 'NV'],
+  VT: ['NY', 'NH', 'MA'], VA: ['MD', 'WV', 'KY', 'TN', 'NC'], WA: ['ID', 'OR'], WV: ['OH', 'PA', 'MD', 'VA', 'KY'], WI: ['MI', 'MN', 'IA', 'IL'], WY: ['MT', 'SD', 'NE', 'CO', 'UT', 'ID'],
+};
+export const JACKPOT_WORDS = {
+  winter: ['Winter Warm-Up', 'Cold Weather Classic', 'Thaw Out Jackpot', 'Barn Burner', 'Frostbite Jackpot', 'Winter Shootout'],
+  spring: ['Spring Fling', 'Spring Classic', 'Green Grass Jackpot', 'Spring Showdown', 'Mud Season Classic', 'Prospect Round-Up'],
+  summer: ['Summer Slam', 'Heat Wave Jackpot', 'Summer Shootout', 'Pre-Fair Classic', 'Dog Days Showdown', 'Fourth of July Jackpot'],
+  fall: ['Fall Classic', 'Harvest Showdown', 'Fall Frenzy', 'Leaf Peeper Jackpot', 'Autumn Shootout', 'Fall Round-Up'],
+};
+export const JACKPOT_PLACES = ['Fairgrounds', 'Expo Center', 'Arena', 'Showbarn', 'Ag Center', 'Livestock Pavilion'];
+export const PLACE_WORDS = ['Valley', 'River', 'Prairie', 'Twin Oaks', 'Heartland', 'Crossroads', 'Cedar', 'Maple', 'Big Creek', 'Sunset', 'North Star', 'Pioneer', 'Hickory', 'Lone Pine', 'Red Barn', 'Grand View'];
+
+// Scrapie codon 171 R-allele frequency by breed (Southdowns have eradicated Q — always RR)
+export const RR_FREQ = {
+  'Southdown': 1, 'Wether-Type Southdown': 1, 'Suffolk': 0.85, 'Hampshire': 0.8, 'Wether-Type Suffolk': 0.75, 'Wether-Type Hampshire': 0.75,
+  'Dorset': 0.7, 'Dorset Advantage': 0.7, 'Horned Dorset': 0.65, 'Wether-Type Dorset': 0.65, 'Oxford': 0.65, 'Wether-Type Oxford': 0.6,
+  'Shropshire': 0.6, 'Wether-Type Shropshire': 0.6, 'Texel': 0.6, 'Montadale': 0.6, 'Dorper': 0.55, 'White Dorper': 0.55, 'Wether-Type Dorper': 0.55,
+  'Natural Colored': 0.5, 'Katahdin': 0.5, 'Tunis': 0.5, 'Cheviot': 0.5, 'Lincoln': 0.5, 'Romney': 0.5, 'Border Leicester': 0.5, 'Kerry Hill': 0.5,
+  'Columbia': 0.45, 'Corriedale': 0.45, 'Rambouillet': 0.4, 'Merino': 0.4, 'Commercial': 0.5, 'Crossbred': 0.65,
+};
+// Dwarf (D) allele frequency — common in club/wether-type lines (~40–50% FD), rare in registered Hamp/Oxford/Shrop/Suffolk (~5% FD), absent elsewhere
+export const DWARF_FREQ = {
+  'Hampshire': 0.025, 'Oxford': 0.025, 'Shropshire': 0.025, 'Suffolk': 0.025,
+  'Wether-Type Hampshire': 0.32, 'Wether-Type Suffolk': 0.32, 'Wether-Type Oxford': 0.3, 'Wether-Type Shropshire': 0.3,
+  'Wether-Type Southdown': 0.28, 'Wether-Type Dorset': 0.28, 'Wether-Type Dorper': 0.28, 'Crossbred': 0.32,
+};

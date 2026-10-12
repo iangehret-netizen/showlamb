@@ -1,7 +1,7 @@
 // ShowLamb — simulation engine
 import {
   TRAITS, EPDS, BREEDS, REG_BREEDS, marketClassOf, FEED_BY_ID, STATES, STATE_WEIGHT,
-  NATIONAL_SHOWS, homeShows, TIER, JUDGE_STYLES, SURNAMES, FLOCK_SUFFIX, LAMB_NAMES, RAM_NAMES, EWE_NAMES, SHOW_NAMES, ACHIEVEMENTS,
+  NATIONAL_SHOWS, homeShows, TIER, WT_BREEDS, baseBreed, NEIGHBORS, RR_FREQ, DWARF_FREQ, JACKPOT_WORDS, JACKPOT_PLACES, PLACE_WORDS, JUDGE_STYLES, SURNAMES, FLOCK_SUFFIX, LAMB_NAMES, RAM_NAMES, EWE_NAMES, SHOW_NAMES, ACHIEVEMENTS,
 } from './data.js';
 
 export const G = { s: null, listeners: [] };
@@ -77,6 +77,10 @@ function avgBase(b1, b2, het) {
 export const isFaceDark = f => f === 'black' || f === 'brown';
 
 // ---------- genetics ----------
+// Dwarf gene: FF = taller, a bit less muscle, slower, sound; FD = the ideal blend, flexible weight; DD = fast early, maxes ~100–110 lb, poor structure
+export const DWARF_LABEL = ['FF (clean)', 'FD (carrier)', 'DD (dwarf)'];
+export function frameOf(a) { const dw = a.dwarf || 0; return dw === 2 ? Math.min(a.base.frame, 108) : a.base.frame + (dw === 0 && !a.base.noFF ? 6 : 0); }
+const growthFx = a => (a.dwarf === 2 ? 1.15 : a.dwarf === 1 ? 1 : 0.95);
 export function inbreeding(sire, dam) {
   if (!sire || !dam) return 0;
   const sm = new Map([[sire.id, 0]]); (sire.anc || []).forEach(([id, g]) => { if (!sm.has(id) || sm.get(id) > g) sm.set(id, g); });
@@ -96,6 +100,10 @@ export function phen(a, t) {
   if (t === 'look') v += ((a.fit ?? 55) - 55) * 0.1;
   if (t === 'dimension') v += ((a.cond ?? 3) - 3) * 2;
   if (a.spider === 2) v -= 18;
+  const dw = a.dwarf || 0;
+  if (dw === 0) { if (t === 'muscle') v -= 2; if (t === 'structure') v += 3; }
+  else if (dw === 1) { if (t === 'muscle') v += 3; if (t === 'dimension') v += 2; }
+  else { if (t === 'structure') v -= 15; if (t === 'balance') v -= 5; }
   const age = S() ? ageDays(a) : 200;
   if (age < 45) v -= (45 - age) * 0.15; // babies don't express it yet
   return clamp(v, 1, 99);
@@ -113,8 +121,28 @@ export function breedingIndex(a) {
   return v;
 }
 
+function pedNode(x, depth) {
+  if (!x) return null;
+  const n = { n: x.name, b: breedLabel(x) };
+  if (depth > 0) {
+    n.s = x.ped?.s ? trimPed(x.ped.s, depth - 1) : (x.sireName && x.sireName !== 'Unrecorded' ? { n: x.sireName } : null);
+    n.d = x.ped?.d ? trimPed(x.ped.d, depth - 1) : (x.damName && x.damName !== 'Unrecorded' ? { n: x.damName } : null);
+  }
+  return n;
+}
+function trimPed(p, depth) { if (!p) return null; const n = { n: p.n, b: p.b }; if (depth > 0) { n.s = trimPed(p.s, depth - 1); n.d = trimPed(p.d, depth - 1); } return n; }
+// founders come with a believable (made-up) pedigree from other programs
+function fakePed(breed, depth) {
+  const lbl = breed === 'Crossbred' ? 'Club' : breed;
+  const node = (sex, d) => {
+    const n = { n: `${pick(SURNAMES)} ${pick(sex === 'R' ? (Math.random() < 0.4 ? SHOW_NAMES : RAM_NAMES) : (Math.random() < 0.4 ? SHOW_NAMES : EWE_NAMES))}`, b: lbl };
+    if (d > 1) { n.s = node('R', d - 1); n.d = node('E', d - 1); }
+    return n;
+  };
+  return { s: node('R', depth), d: node('E', depth) };
+}
 export function snapshot(a) {
-  return { id: a.id, name: a.name, breed: a.breed, comp: a.comp, face: a.face, reg: a.reg, base: { ...a.base }, bv: { ...a.bv }, spider: a.spider, scr: a.scr, anc: a.anc, owner: a.owner, ownerName: flockName(a.owner), sex: a.sex, prog: a.prog, err: { ...a.err }, tested: { ...a.tested } };
+  return { ped: a.ped, sireName: a.sireName, damName: a.damName, id: a.id, name: a.name, breed: a.breed, comp: a.comp, face: a.face, reg: a.reg, base: { ...a.base }, bv: { ...a.bv }, spider: a.spider, dwarf: a.dwarf || 0, scr: a.scr, anc: a.anc, owner: a.owner, ownerName: flockName(a.owner), sex: a.sex, prog: a.prog, err: { ...a.err }, tested: { ...a.tested } };
 }
 
 function newBV(q, F = 0) {
@@ -159,12 +187,14 @@ export function makeFounder({ breed, sex, ageDays: age, owner, q = 0, comp, face
   const a = {
     id: uid('a'), owner, breed, comp: comp || breed, face: face || br.face, reg: br.reg !== false,
     sex, birth: s.day - age, base, bv: newBV(q), pe: newPE(), err: newErr(), prog: 0, F: 0, anc: [],
-    spider: Math.random() < br.spider ? 1 : 0, scr: (Math.random() < br.rr ? 'R' : 'Q') + (Math.random() < br.rr ? 'R' : 'Q'),
+    spider: Math.random() < br.spider ? 1 : 0, dwarf: (Math.random() < (DWARF_FREQ[breed] || 0) ? 1 : 0) + (Math.random() < (DWARF_FREQ[breed] || 0) ? 1 : 0),
+    scr: (Math.random() < (RR_FREQ[breed] ?? 0.5) ? 'R' : 'Q') + (Math.random() < (RR_FREQ[breed] ?? 0.5) ? 'R' : 'Q'),
     tested: {}, record: [], cond: 3, fit: 50, train: 40, tone: 0, keep,
     sireName: 'Unrecorded', damName: 'Unrecorded',
   };
   if (a.scr === 'QR') a.scr = 'RQ';
-  a.wt = weightForAge(age, a.base.frame, sex) * (1 + a.bv.PWG / 60);
+  if (owner !== 'LOCAL') { a.ped = fakePed(a.breed, 3); a.sireName = a.ped.s.n; a.damName = a.ped.d.n; }
+  a.wt = weightForAge(age, frameOf(a), sex) * (1 + a.bv.PWG / 60);
   a.name = animalName(f, sex); a.tag = owner === 'LOCAL' ? '' : nextTag(f);
   return a;
 }
@@ -173,11 +203,12 @@ function removeAnimal(id) { delete S().animals[id]; }
 
 function offspring(dam, sire, owner, recipient) {
   const s = S(); const f = flock(owner);
-  const same = dam.breed === sire.breed;
+  const wtPair = dam.breed !== sire.breed && baseBreed(dam.breed) === baseBreed(sire.breed) && (dam.breed.startsWith('Wether-Type') || sire.breed.startsWith('Wether-Type'));
+  const same = dam.breed === sire.breed || wtPair;
   let breed, comp, face, base, reg;
   if (same) {
-    breed = dam.breed; comp = dam.comp || breed; base = dam.breed === 'Crossbred' ? avgBase(dam.base, sire.base, false) : breedBase(breed);
-    reg = dam.reg && sire.reg && BREEDS[breed].reg !== false; face = breed === 'Crossbred' ? (isFaceDark(dam.face) || isFaceDark(sire.face) ? 'black' : 'white') : BREEDS[breed].face;
+    breed = wtPair ? (dam.breed.startsWith('Wether-Type') ? dam.breed : sire.breed) : dam.breed; comp = wtPair ? breed : (dam.comp || breed); base = dam.breed === 'Crossbred' ? avgBase(dam.base, sire.base, false) : breedBase(breed);
+    reg = !wtPair && dam.reg && sire.reg && BREEDS[breed].reg !== false; face = breed === 'Crossbred' ? (isFaceDark(dam.face) || isFaceDark(sire.face) ? 'black' : 'white') : BREEDS[breed].face;
   } else {
     breed = 'Crossbred'; reg = false;
     const ds = dam.breed === 'Crossbred' || dam.breed === 'Commercial' ? (dam.breed === 'Commercial' ? 'Commercial' : 'Club') : dam.breed;
@@ -203,10 +234,10 @@ function offspring(dam, sire, owner, recipient) {
   (sire.anc || []).forEach(([id, g]) => g < 3 && anc.push([id, g + 1]));
   (dam.anc || []).forEach(([id, g]) => g < 3 && anc.push([id, g + 1]));
   const a = {
-    id: uid('a'), owner, breed, comp, face, reg, sex: Math.random() < 0.5 ? 'R' : 'E', birth: s.day,
+    id: uid('a'), owner, breed, comp, face, reg: reg && owner !== 'P', regOk: reg, sex: Math.random() < 0.5 ? 'R' : 'E', birth: s.day,
     base, bv, pe: newPE(), err: newErr(), prog: 0, F, anc,
-    spider: al(dam.spider) + al(sire.spider), scr, tested: {}, record: [], cond: 2.5, fit: 50, train: 20, tone: 0,
-    sire: sire.id, dam: dam.id, sireName: sire.name, damName: dam.name, sireOwner: sire.ownerName || flockName(sire.owner),
+    spider: al(dam.spider) + al(sire.spider), dwarf: al(dam.dwarf || 0) + al(sire.dwarf || 0), scr, tested: {}, record: [], cond: 2.5, fit: 50, train: 20, tone: 0,
+    sire: sire.id, dam: dam.id, sireName: sire.name, damName: dam.name, ped: { s: pedNode(sire, 2), d: pedNode(dam, 2) }, sireOwner: sire.ownerName || flockName(sire.owner),
     damMilk: (recipient || dam).bv.MILK, et: !!recipient, recipName: recipient?.name,
   };
   a.wt = Math.max(5, 9 + a.bv.BW * 1.2 + randn() * 0.8);
@@ -290,13 +321,23 @@ export function implant(embId, recipId) {
 export function setCare(id, care) { const a = S().animals[id]; a.care = { ...(a.care || defaultCare()), ...care }; }
 export const defaultCare = () => ({ feed: 'developer', lbs: 3, ex: 1, rinse: true, halter: true });
 export function toggleString(id) { const a = S().animals[id]; a.string = !a.string; if (a.string && !a.care) a.care = defaultCare(); }
+export const REG_FEE = 10;
+export function register(id) {
+  const s = S(); const a = s.animals[id];
+  if (a.reg) return 'Already registered.';
+  if (!a.regOk) return 'Only purebred lambs out of two registered parents of the same breed can be registered.';
+  if (a.sex === 'W') return 'Wethers can’t be registered.';
+  if (s.cash < REG_FEE) return 'Not enough cash.';
+  addCash(-REG_FEE, `Registration — ${a.name}`); a.reg = true;
+  return null;
+}
 export function wether(id) { const a = S().animals[id]; if (a.sex === 'R') { a.sex = 'W'; a.reg = a.reg; } }
 export function rename(id, name) { const a = S().animals[id]; if (name.trim()) a.name = name.trim().slice(0, 30); }
 export function testAnimal(id, kind) {
-  const s = S(); const a = s.animals[id]; const cost = kind === 'spider' ? 35 : 30;
+  const s = S(); const a = s.animals[id]; const cost = kind === 'scrapie' ? 30 : 35;
   if (a.tested[kind]) return 'Already tested.';
   if (s.cash < cost) return 'Not enough cash.';
-  addCash(-cost, `${kind === 'spider' ? 'Spider' : 'Scrapie codon 171'} test — ${a.name}`);
+  addCash(-cost, `${{ spider: 'Spider', dwarf: 'Dwarf', scrapie: 'Scrapie codon 171' }[kind]} test — ${a.name}`);
   a.tested[kind] = true;
   if (kind === 'scrapie' && a.scr === 'RR' && a.sex === 'R') achieve('rr_ram');
   return null;
@@ -353,6 +394,7 @@ export function fairValue(a) {
     if (a.tested.scrapie && a.scr === 'RR') v *= 1.15;
   }
   if (a.tested.spider && a.spider === 1) v *= 0.4;
+  if (a.tested.dwarf && a.dwarf === 2) v = Math.min(v, Math.max(packerPrice(a) * 1.3, v * 0.35));
   if (a.tested.scrapie && a.scr === 'QQ') v *= 0.8;
   v *= (1 + (a.record?.filter(r => r.banner).length || 0) * 0.08);
   return Math.max(packerPrice(a), v);
@@ -505,42 +547,70 @@ function closeAuction(L) {
   transfer(L, winner, price);
 }
 
-// AI flocks consign lots by season
+// market categories
+export function listCategory(a) {
+  if (a.sex === 'W') return 'wether';
+  if (a.sex === 'R') return 'ram';
+  if (a.preg && (a.preg.ok || S().day < a.preg.check)) return 'bred';
+  return ageDays(a) < 300 ? 'lamb' : 'ewe';
+}
+function consign(f, a) {
+  const s = S();
+  const fv = fairValue(a) * repMult(f.id);
+  const mode = Math.random() < 0.6 ? 'auction' : 'buy';
+  const L = { id: uid('L'), kind: 'animal', aid: a.id, seller: f.id, mode, start: s.day, end: s.day + (mode === 'auction' ? irnd(4, 9) : irnd(10, 25)) };
+  L.price = mode === 'auction' ? Math.max(100, Math.round(fv * rnd(0.3, 0.55) / 25) * 25) : Math.round(fv * rnd(0.95, 1.4) / 25) * 25;
+  L.reserve = mode === 'auction' ? L.price : 0;
+  if (mode === 'auction') L.bidders = makeBidders(fairValue(a), f.id, lotType(a), L.end - s.day);
+  a.listing = L.id; s.listings.push(L);
+}
+// AI flocks consign lots — prospects by season; bred ewes, semen, embryos year-round
 function aiListings() {
   const s = S(); const m = monthOf(s.day);
-  const active = s.listings.filter(l => l.seller !== 'P').length;
-  if (active > 120) return;
-  const sales = irnd(1, 4);
+  if (s.listings.filter(l => l.seller !== 'P').length > 150) return;
+  const flocks = s.flocks.filter(x => x.id !== 'P');
+  const own = f => living().filter(a => a.owner === f.id && !a.listing);
+  const prospect = (m >= 1 && m <= 5) || (m >= 7 && m <= 9);
+  const sales = prospect ? irnd(1, 4) : irnd(0, 1);
   for (let i = 0; i < sales; i++) {
-    const f = pick(s.flocks.filter(x => x.id !== 'P'));
-    const mine = living().filter(a => a.owner === f.id && !a.listing);
-    let lots = [];
-    if (m >= 1 && m <= 5) lots = mine.filter(a => ageDays(a) >= 40 && ageDays(a) <= 150 && a.sex !== 'R' && !a.keep);
-    else if (m >= 7 && m <= 9) lots = mine.filter(a => (ageDays(a) >= 40 && ageDays(a) <= 140 && a.sex !== 'R' && !a.keep) || (a.sex === 'E' && ageDays(a) > 400 && ageDays(a) < 1500 && Math.random() < 0.15));
-    else if (m >= 5 && m <= 8) lots = mine.filter(a => a.sex === 'R' && ageDays(a) > 150 && ageDays(a) < 800 && a.keep);
-    else if (m >= 9 || m === 0) lots = mine.filter(a => a.sex === 'E' && a.preg?.ok && ageDays(a) < 1800 && Math.random() < 0.25);
-    if (m >= 5 && m <= 8) lots = lots.concat(mine.filter(a => a.sex === 'R' && ageDays(a) > 120 && ageDays(a) < 500 && Math.random() < 0.3));
-    shuffle(lots).slice(0, irnd(2, 6)).forEach(a => {
-      const fv = fairValue(a) * repMult(f.id);
-      const mode = Math.random() < 0.6 ? 'auction' : 'buy';
-      const L = { id: uid('L'), kind: 'animal', aid: a.id, seller: f.id, mode, start: s.day, end: s.day + (mode === 'auction' ? irnd(4, 9) : irnd(10, 25)) };
-      L.price = mode === 'auction' ? Math.max(100, Math.round(fv * rnd(0.3, 0.55) / 25) * 25) : Math.round(fv * rnd(0.95, 1.4) / 25) * 25;
-      L.reserve = mode === 'auction' ? L.price : 0;
-      if (mode === 'auction') L.bidders = makeBidders(fairValue(a), f.id, lotType(a), L.end - s.day);
-      a.listing = L.id; s.listings.push(L);
-    });
+    const f = pick(flocks);
+    const lots = own(f).filter(a => ageDays(a) >= 40 && ageDays(a) <= 160 && a.sex !== 'R' && !a.keep && !a.preg);
+    shuffle(lots).slice(0, irnd(2, 6)).forEach(a => consign(f, a));
   }
-  // embryo lots in the winter
-  if ((m >= 9 || m <= 1) && Math.random() < 0.25) {
-    const f = pick(s.flocks.filter(x => x.id !== 'P' && x.type === 'breed'));
-    const ewes = living().filter(a => a.owner === f.id && a.sex === 'E' && ageDays(a) > 400 && ageDays(a) < 2000);
-    const rams = living().filter(a => a.owner === f.id && a.sex === 'R' && ageDays(a) > 250);
+  // bred ewes — year-round (flocks lamb in different seasons)
+  for (let k = 0; k < irnd(1, 2); k++) if (Math.random() < 0.7) {
+    const f = pick(flocks);
+    const ewes = own(f).filter(a => a.sex === 'E' && a.preg?.ok && s.day >= a.preg.check && a.preg.due - s.day > 20 && ageDays(a) < 2000);
+    shuffle(ewes).slice(0, irnd(1, 2)).forEach(a => consign(f, a));
+  }
+  // open ewes
+  if (Math.random() < (m >= 6 && m <= 9 ? 0.6 : 0.3)) {
+    const f = pick(flocks);
+    const ewes = own(f).filter(a => a.sex === 'E' && !a.preg && ageDays(a) > 300 && ageDays(a) < 1800);
+    shuffle(ewes).slice(0, irnd(1, 2)).forEach(a => consign(f, a));
+  }
+  // rams — busiest Jun–Sep
+  if (Math.random() < (m >= 5 && m <= 8 ? 0.85 : 0.3)) {
+    const f = pick(flocks);
+    const rams = own(f).filter(a => a.sex === 'R' && ageDays(a) > 120 && ageDays(a) < 900).sort((x, y) => breedingIndex(y) - breedingIndex(x));
+    const pool = rams.length > 1 ? rams.slice(1) : (rams[0] && ageDays(rams[0]) < 365 ? rams : []);
+    shuffle(pool).slice(0, irnd(1, 2)).forEach(a => consign(f, a));
+  }
+  // embryos — year-round
+  if (Math.random() < 0.35) {
+    const f = pick(flocks);
+    const mine = own(f);
+    const ewes = mine.filter(a => a.sex === 'E' && ageDays(a) > 400 && ageDays(a) < 2000);
+    const rams = mine.filter(a => a.sex === 'R' && ageDays(a) > 250);
     if (ewes.length && rams.length) {
       const d = ewes.sort((a, b) => breedingIndex(b) - breedingIndex(a))[0], r = rams.sort((a, b) => breedingIndex(b) - breedingIndex(a))[0];
       const emb = { id: uid('e'), dam: snapshot(d), sire: snapshot(r), count: irnd(2, 5), day: s.day };
       const fv = embryoValue(emb) * emb.count * repMult(f.id);
-      const L = { id: uid('L'), kind: 'embryo', emb, seller: f.id, mode: 'auction', start: s.day, end: s.day + irnd(5, 9), price: Math.max(100, Math.round(fv * 0.4 / 25) * 25) };
-      L.reserve = L.price; L.bidders = makeBidders(embryoValue(emb) * emb.count, f.id, 'embryo', L.end - s.day);
+      const mode = Math.random() < 0.6 ? 'auction' : 'buy';
+      const L = { id: uid('L'), kind: 'embryo', emb, seller: f.id, mode, start: s.day, end: s.day + (mode === 'auction' ? irnd(5, 9) : irnd(10, 25)) };
+      L.price = mode === 'auction' ? Math.max(100, Math.round(fv * 0.4 / 25) * 25) : Math.round(fv * rnd(1, 1.3) / 25) * 25;
+      L.reserve = mode === 'auction' ? L.price : 0;
+      if (mode === 'auction') L.bidders = makeBidders(embryoValue(emb) * emb.count, f.id, 'embryo', L.end - s.day);
       s.listings.push(L);
     }
   }
@@ -587,13 +657,47 @@ export function allShows() {
   const s = S();
   return [...homeShows(s.home, s.county), ...NATIONAL_SHOWS];
 }
-export function upcomingShows(n = 14) {
+function rng(seed) { let t = seed >>> 0; return () => { t += 0x6D2B79F5; let r = Math.imul(t ^ t >>> 15, 1 | t); r ^= r + Math.imul(r ^ r >>> 7, 61 | r); return ((r ^ r >>> 14) >>> 0) / 4294967296; }; }
+const hashStr = str => [...str].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261);
+// Weekly jackpots: Feb–Oct 2+ regional (home + bordering states) and 1 elsewhere each week; fewer in winter
+export function jackpotsOn(d) {
+  const s = S(); const t = dateOf(d); const dow = t.getUTCDay(); const m = t.getUTCMonth(); const y = t.getUTCFullYear();
+  if (dow !== 6 && dow !== 0) return [];
+  const r = rng(hashStr(`${s.home}:${d}`));
+  const rp = arr => arr[Math.floor(r() * arr.length)];
+  const inSeason = m >= 1 && m <= 9;
+  const region = [s.home, ...(NEIGHBORS[s.home] || [])];
+  const nReg = inSeason ? (dow === 6 ? 1 + (r() < 0.5 ? 1 : 0) : 1) : (dow === 6 && r() < 0.6 ? 1 : 0);
+  const nFar = dow === 6 ? (inSeason ? 1 : (r() < 0.35 ? 1 : 0)) : 0;
+  const far = Object.keys(STATE_WEIGHT).filter(k => !region.includes(k));
+  const farW = far.map(k => STATE_WEIGHT[k]); const farT = farW.reduce((a, b) => a + b, 0);
+  const pickFar = () => { let x = r() * farT; for (let i = 0; i < far.length; i++) { x -= farW[i]; if (x <= 0) return far[i]; } return far[0]; };
+  const season = m <= 1 || m >= 10 ? 'winter' : m <= 4 ? 'spring' : m <= 7 ? 'summer' : 'fall';
+  const out = [];
+  for (let i = 0; i < nReg + nFar; i++) {
+    const host = i < nReg ? (r() < 0.5 ? s.home : rp(region)) : pickFar();
+    const word = rp(JACKPOT_WORDS[season]);
+    const place = rp(PLACE_WORDS);
+    out.push({
+      id: `wj${d}_${i}`, key: `wj-${d}-${i}`, name: `${place} ${word} — ${STATES[host]}`, short: `${word} (${host})`,
+      day: d, year: y, m, d: t.getUTCDate(), tier: 'jackpot', breeding: false, minWt: 95, maxWt: 165, fee: 25 + 5 * Math.floor(r() * 4),
+      host, jackpot: true, regional: i < nReg, venue: `${place} ${rp(JACKPOT_PLACES)}`,
+    });
+  }
+  return out;
+}
+export function upcomingShows(n = 14, opts = {}) {
   const s = S(); const y = yearOf(s.day); const out = [];
-  for (const yy of [y, y + 1, y + 2]) for (const sh of allShows()) {
+  if (!opts.jackpotsOnly) for (const yy of [y, y + 1, y + 2]) for (const sh of allShows()) {
     const d = dayOf(yy, sh.m, sh.d);
     if (d > s.day) out.push({ ...sh, day: d, year: yy, key: `${sh.id}-${yy}` });
   }
+  if (!opts.noJackpots) for (let d = s.day + 1; d <= s.day + (opts.horizon || 90); d++) out.push(...jackpotsOn(d));
   return out.sort((a, b) => a.day - b.day).slice(0, n);
+}
+export function findShow(key) {
+  if (key.startsWith('wj-')) { const [, d, i] = key.split('-'); return jackpotsOn(+d)[+i] || null; }
+  return upcomingShows(40, { noJackpots: true }).find(x => x.key === key) || null;
 }
 export function judgeFor(key) {
   const s = S();
@@ -623,9 +727,9 @@ export function projectedWeight(a, days) {
     if (age < 60) adg = 0.5 + 0.025 * a.bv.WW + 0.03 * (a.damMilk || 0);
     else {
       const eff = a.owner === 'P' ? (a.string ? F.energy * Math.min(1, c.lbs / (w * 0.035)) + Math.max(0, c.lbs - w * 0.035) * 0.05 : 0.34) : 0.7;
-      adg = (0.22 + 0.68 * eff) * (1 + a.bv.PWG / 25) * (a.base.frame / 140) * Math.max(0.08, 1 - Math.max(0, w / a.base.frame - 0.9) * 3);
+      adg = (0.22 + 0.68 * eff) * (1 + a.bv.PWG / 25) * (frameOf(a) / 140) * growthFx(a) * Math.max(0.03, 1 - Math.max(0, w / frameOf(a) - 0.9) * 3);
     }
-    w += Math.max(0.05, adg) * (a.spider === 2 ? 0.5 : 1);
+    w += Math.max(a.dwarf === 2 && w > 104 ? 0.01 : 0.05, adg) * (a.spider === 2 ? 0.5 : 1);
   }
   return w;
 }
@@ -651,13 +755,13 @@ function showScore(a, judge, kind, show) {
   if (kind === 'market') {
     for (const t of TRAITS) v += w[t] * phen(a, t);
     v -= 5 * Math.pow(Math.abs((a.cond ?? 3) - 3), 1.4);
-    const ratio = a.wt / a.base.frame;
-    if (ratio < 0.86) v -= (0.86 - ratio) * 70;
-    if (ratio > 1.06) v -= (ratio - 1.06) * 55;
+    const ratio = a.wt / frameOf(a); const flex = a.dwarf === 1 ? 0.07 : 0;
+    if (ratio < 0.86 - flex) v -= (0.86 - flex - ratio) * 70;
+    if (ratio > 1.06 + flex) v -= (ratio - 1.06 - flex) * 55;
   } else {
     const bw = { structure: .24, balance: .2, bone: .14, look: .16, muscle: .14, dimension: .12 };
     for (const t of TRAITS) v += (bw[t] * 0.6 + w[t] * 0.4) * phen(a, t);
-    const exp = weightForAge(ageDays(a), a.base.frame, a.sex);
+    const exp = weightForAge(ageDays(a), frameOf(a), a.sex);
     v += clamp((a.wt / exp - 1) * 20, -6, 5);
   }
   v += (pres.train - 50) * 0.06 + randn() * 2.2;
@@ -677,7 +781,7 @@ function runClass(list, judge, kind, show) {
 function localLamb(show, kind, breed) {
   const age = irnd(150, 260);
   const a = makeFounder({ breed: breed || (Math.random() < 0.7 ? 'Crossbred' : pick(['Suffolk', 'Hampshire', 'Southdown', 'Dorset', 'Shropshire', 'Natural Colored'])), sex: Math.random() < 0.6 ? 'W' : 'E', ageDays: age, owner: 'LOCAL', q: rnd(-6, 4), comp: 'Hampshire × Suffolk', face: Math.random() < 0.8 ? 'black' : 'white' });
-  a.wt = clamp(a.base.frame * rnd(0.82, 1.05), show.minWt + 2, show.maxWt - 2); a.cond = clamp(3 + randn() * 0.5, 1.8, 4.3);
+  a.wt = clamp(frameOf(a) * rnd(0.82, 1.05), show.minWt + 2, show.maxWt - 2); a.cond = clamp(3 + randn() * 0.5, 1.8, 4.3);
   a.name = `${pick(namePool(a.sex))} (${pick(SURNAMES)} family)`; a.temp = true;
   return a;
 }
@@ -686,7 +790,8 @@ function attendingFlocks(show) {
   const s = S(); const t = TIER[show.tier];
   let pool = s.flocks.filter(f => f.id !== 'P');
   const scale = Math.max(1, pool.length / 150);
-  if (show.tier === 'county') pool = pool.filter(f => f.state === s.home);
+  if (show.jackpot) { const reg = [show.host, ...(NEIGHBORS[show.host] || [])]; pool = pool.filter(f => reg.includes(f.state) || Math.random() < 0.04); }
+  else if (show.tier === 'county') pool = pool.filter(f => f.state === s.home);
   else if (show.tier === 'state') pool = pool.filter(f => f.state === s.home || Math.random() < 0.06);
   else if (show.tier === 'jackpot') pool = pool.filter(f => f.state === s.home || Math.random() < 0.15);
   else if (show.id === 'keystone') pool = pool.filter(f => ['PA', 'OH', 'NY', 'MD', 'VA', 'WV', 'NJ', 'DE', 'MI', 'IN', 'KY'].includes(f.state) || Math.random() < 0.15);
@@ -814,7 +919,7 @@ export function runShow(show) {
   s.results.unshift(res);
   // keep all results with my animals + the 12 most recent others
   let others = 0; s.results = s.results.filter(r => r.mine.length || hadMine && r === res || (++others <= 12));
-  delete s.entries[show.key];
+  delete s.entries[show.key]; delete s.judges[show.key];
   if (hadMine) { toast(`${show.short} results are in!`, 'show'); news(`Results posted: ${show.name}. ${res.mine.length ? res.mine.map(m => `${m.name}: ${m.text}`).join(' · ') : ''}`, 'show', true); }
   return res;
 }
@@ -864,25 +969,27 @@ function makeFlock(i, opts = {}) {
     breed = wpick({ Suffolk: 10, Hampshire: 10, Southdown: 9, Shropshire: 6, Dorset: 7, Oxford: 4, Montadale: 3, 'Natural Colored': 4, Texel: 3, 'Wether-Type Southdown': 3, Dorper: 2, 'White Dorper': 2, Katahdin: 2, Tunis: 2, Cheviot: 1, Columbia: 1, Corriedale: 1, Rambouillet: 1, 'Border Leicester': 1, 'Horned Dorset': 1, 'Dorset Advantage': 1, Romney: 1, Lincoln: 0.6, Merino: 0.6, 'Kerry Hill': 0.6 });
     if (['Suffolks', 'Hampshires', 'Southdowns', 'Dorsets'].includes(suf)) suf = 'Farms';
   } else if (['Suffolks', 'Hampshires', 'Southdowns', 'Dorsets'].includes(suf)) suf = 'Club Lambs';
+  const wt = type === 'club' && Math.random() < (opts.wtChance ?? 0.35) ? pick(WT_BREEDS) : null;
+  const season = wpick({ early: 0.2, winter: 0.45, late: 0.2, fall: 0.15 });
   const skill = clamp(opts.skill ?? Math.pow(Math.random(), 1.3), 0, 1);
   const name = `${sur} ${suf}`;
   return {
     id: 'F' + i, name: s.flocks.some(f => f.name === name) ? `${sur} & Sons ${suf}` : name, state: opts.state || wState(), type, breed, skill,
     q: -2 + skill * 12 + randn() * 1.5, rep: Math.round(skill * skill * 60), banners: 0, prefix: sur.slice(0, 3).toUpperCase(), seq: 0,
-    size: opts.size || irnd(5, 13), fall: Math.random() < 0.18, founded: s.day,
+    size: opts.size || irnd(5, 13), season, fall: season === 'fall', wt, founded: s.day,
   };
 }
 function stockFlock(f, withLambs) {
   const club = f.type === 'club';
   const ewes = f.size;
   for (let i = 0; i < ewes; i++) {
-    const breed = club ? (Math.random() < 0.85 ? 'Crossbred' : pick(['Suffolk', 'Hampshire', 'Southdown', 'Shropshire'])) : f.breed;
+    const breed = club ? (f.wt ? (Math.random() < 0.85 ? f.wt : 'Crossbred') : (Math.random() < 0.85 ? 'Crossbred' : pick(['Suffolk', 'Hampshire', 'Southdown', 'Shropshire', pick(WT_BREEDS)]))) : f.breed;
     const comp = pick(['Hampshire × Suffolk', 'Suffolk × Hampshire', 'Hampshire × Southdown', 'Suffolk × Shropshire', 'Southdown × Hampshire']);
     addAnimal(makeFounder({ breed, sex: 'E', ageDays: irnd(400, 2300), owner: f.id, q: f.q, comp, face: 'black', keep: true }));
   }
   const rams = f.size > 9 ? 2 : 1;
   for (let i = 0; i < rams; i++) {
-    const breed = club ? pick(['Hampshire', 'Suffolk', 'Southdown', 'Crossbred', 'Hampshire', 'Shropshire', 'Dorset']) : f.breed;
+    const breed = club ? (f.wt && Math.random() < 0.8 ? f.wt : pick(['Hampshire', 'Suffolk', 'Southdown', 'Crossbred', 'Wether-Type Hampshire', 'Wether-Type Suffolk', 'Shropshire', 'Dorset'])) : f.breed;
     addAnimal(makeFounder({ breed, sex: 'R', ageDays: irnd(400, 1500), owner: f.id, q: f.q + 1.5, comp: 'Hampshire × Suffolk', face: 'black', keep: true }));
   }
   if (withLambs) {
@@ -890,9 +997,9 @@ function stockFlock(f, withLambs) {
     const dams = living().filter(a => a.owner === f.id && a.sex === 'E');
     const sire = living().find(a => a.owner === f.id && a.sex === 'R');
     for (let i = 0; i < n; i++) {
-      const d = pick(dams); const age = f.fall ? irnd(330, 380) : irnd(170, 245);
+      const d = pick(dams); const age = { early: irnd(250, 290), winter: irnd(190, 230), late: irnd(150, 185), fall: irnd(330, 380) }[f.season || 'winter'];
       const a = offspring(d, snapshot(sire), f.id);
-      a.birth = S().day - age; a.wt = weightForAge(age, a.base.frame, a.sex) * (1 + a.bv.PWG / 60) * rnd(0.92, 1.05);
+      a.birth = S().day - age; a.wt = weightForAge(age, frameOf(a), a.sex) * (1 + a.bv.PWG / 60) * rnd(0.92, 1.05);
       if (a.sex === 'R') a.sex = (a.reg && Math.random() < 0.3) ? 'R' : 'W';
       a.cond = clamp(2.6 + f.skill * 0.6 + randn() * 0.3, 1.5, 4.5); a.fit = 50; a.train = 50;
       if (a.sex === 'R') a.keep = true;
@@ -910,10 +1017,11 @@ export function starterOptions() {
     makeFounder({ breed: 'Crossbred', sex: 'E', ageDays: irnd(500, 1300), owner: 'P', q: q(), comp: 'Suffolk × Southdown', face: 'black' }),
     makeFounder({ breed: 'Crossbred', sex: 'E', ageDays: irnd(500, 1300), owner: 'P', q: q(), comp: 'Hampshire × Shropshire', face: 'black' }),
     makeFounder({ breed: 'Commercial', sex: 'E', ageDays: irnd(500, 1300), owner: 'P', q: q() - 1, face: 'white' }),
-    ...['Suffolk', 'Hampshire', 'Southdown', 'Shropshire', 'Dorset', 'Oxford', 'Natural Colored', 'Montadale', 'Texel', 'Wether-Type Southdown', 'Dorper', 'Katahdin']
+    ...['Wether-Type Hampshire', 'Wether-Type Suffolk', 'Wether-Type Southdown', 'Wether-Type Dorset'].map(b => makeFounder({ breed: b, sex: 'E', ageDays: irnd(450, 1300), owner: 'P', q: q() })),
+    ...['Suffolk', 'Hampshire', 'Southdown', 'Shropshire', 'Dorset', 'Oxford', 'Natural Colored', 'Montadale', 'Texel', 'Dorper', 'Katahdin']
       .map(b => makeFounder({ breed: b, sex: 'E', ageDays: irnd(450, 1400), owner: 'P', q: q() })),
   ];
-  const rams = ['Hampshire', 'Suffolk', 'Southdown', 'Shropshire', 'Dorset', 'Crossbred', 'Texel', 'Oxford']
+  const rams = ['Hampshire', 'Suffolk', 'Southdown', 'Shropshire', 'Dorset', 'Crossbred', 'Wether-Type Hampshire', 'Wether-Type Suffolk', 'Wether-Type Shropshire', 'Texel', 'Oxford']
     .map(b => makeFounder({ breed: b, sex: 'R', ageDays: irnd(400, 1000), owner: 'P', q: q() + 1, comp: 'Hampshire × Suffolk', face: 'black' }));
   return { ewes, rams };
 }
@@ -979,17 +1087,17 @@ export function simDay() {
           a.tone += ((c.ex || 0) * 2 - a.tone) * 0.03;
           a.fit += ((c.rinse ? 88 : 35) - a.fit) * 0.05;
           a.train = clamp(a.train + (c.halter ? 1.6 : -0.25), 0, 100);
-          a.cond += ((1.5 + 2.6 * eff + a.bv.FAT * 1.5 - (c.ex || 0) * 0.35 + (a.wt / a.base.frame - 0.85) * 1.5) - a.cond) * 0.04;
+          a.cond += ((1.5 + 2.6 * eff + a.bv.FAT * 1.5 - (c.ex || 0) * 0.35 + (a.wt / frameOf(a) - 0.85) * 1.5) - a.cond) * 0.04;
         } else { eff = 0.34; a.tone *= 0.98; a.fit += (35 - a.fit) * 0.03; a.train = Math.max(0, a.train - 0.2); a.cond += (2.4 - a.cond) * 0.03; upkeep += 0.15; }
       } else {
         const f = flock(a.owner); const k = f?.skill ?? 0.5;
-        eff = a.keep ? 0.5 : (a.wt / a.base.frame > 0.93 ? 0.3 : 0.55 + k * 0.38);
+        eff = a.keep ? 0.5 : (a.wt / frameOf(a) > 0.93 ? 0.3 : 0.55 + k * 0.38);
         a.cond += ((2.7 + k * 0.5 + a.bv.FAT) - a.cond) * 0.04;
       }
-      a.lastAdg = Math.max(0.05, (0.22 + 0.68 * eff) * (1 + a.bv.PWG / 25) * (a.base.frame / 140) * Math.max(0.08, 1 - Math.max(0, a.wt / a.base.frame - 0.9) * 3)) * (a.spider === 2 ? 0.5 : 1);
+      a.lastAdg = Math.max(a.dwarf === 2 && a.wt > 104 ? 0.01 : 0.05, (0.22 + 0.68 * eff) * (1 + a.bv.PWG / 25) * (frameOf(a) / 140) * growthFx(a) * Math.max(0.03, 1 - Math.max(0, a.wt / frameOf(a) - 0.9) * 3)) * (a.spider === 2 ? 0.5 : 1);
       a.wt += a.lastAdg;
     } else {
-      const mature = a.base.frame * (a.sex === 'R' ? 1.65 : 1.22);
+      const mature = frameOf(a) * (a.dwarf === 2 ? 1.05 : a.sex === 'R' ? 1.65 : 1.22);
       a.wt += (mature - a.wt) * 0.004; a.cond += (3 - a.cond) * 0.02; a.lastAdg = 0;
       if (a.owner === 'P') upkeep += 0.25;
     }
@@ -1004,6 +1112,7 @@ export function simDay() {
   if (dm === 1 && s.feedMonth) { s.ledger.unshift({ day: d, n: -Math.round(s.feedMonth), why: 'Feed, bedding & upkeep (last month)' }); s.feedMonth = 0; }
 
   // shows today
+  for (const sh of jackpotsOn(d)) runShow(sh);
   for (const sh of allShows()) {
     const y = yearOf(d); const sd = dayOf(y, sh.m, sh.d);
     if (sd === d) runShow({ ...sh, day: d, year: y, key: `${sh.id}-${y}` });
@@ -1016,7 +1125,7 @@ export function simDay() {
 
   // AI flock calendar
   aiCalendar(d, m, dm);
-  if (dm === 1 || dm === 15) aiListings(); else if (Math.random() < 0.5) aiListings();
+  aiListings();
   processMarket();
   if (dm === 1 && m === 6) refreshDirectory();
   if (dm === 1) growFlocks();
@@ -1075,12 +1184,14 @@ function aiCalendar(d, m, dm) {
     }
   }
   // breeding: Sep 1 (spring lambing) / Mar 20 (fall lambing flocks), retries a month later
-  const fallDay = m === 2 && dm === 20, fallRe = m === 3 && dm === 25;
-  const sprDay = m === 8 && dm === 1, sprRe = m === 9 && dm === 5;
-  if (sprDay || sprRe || fallDay || fallRe) {
+  const y = yearOf(d);
+  const BD = { early: [7, 1], winter: [8, 1], late: [9, 15], fall: [2, 20] };
+  const todayFor = {};
+  for (const [k, [bm, bd]] of Object.entries(BD)) { const t0 = dayOf(y, bm, bd); todayFor[k] = d === t0 || d === t0 + 35 || dayOf(y - 1, bm, bd) + 35 === d; }
+  if (Object.values(todayFor).some(Boolean)) {
     for (const f of s.flocks) {
       if (f.id === 'P') continue;
-      if ((fallDay || fallRe) !== f.fall) continue;
+      if (!todayFor[f.season || (f.fall ? 'fall' : 'winter')]) continue;
       const mine = living().filter(a => a.owner === f.id);
       const rams = mine.filter(a => a.sex === 'R' && ageDays(a) > 200).sort((x, y) => breedingIndex(y) - breedingIndex(x));
       const ewes = mine.filter(a => a.sex === 'E' && a.keep && canBreed(a));
