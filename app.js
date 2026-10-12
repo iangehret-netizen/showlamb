@@ -116,6 +116,7 @@ function viewBarn() {
   return `<h2>Your flock</h2>
   <div class="stats"><div class="stat"><b>${mine.length}</b><span>Head</span></div><div class="stat"><b>${mine.filter(F.ewes).length}</b><span>Ewes</span></div><div class="stat"><b>${mine.filter(F.lambs).length}</b><span>Lambs</span></div><div class="stat"><b>${mine.filter(F.string).length}</b><span>Showing</span></div></div>
   ${due ? `<div class="note">Next lambing: <b>${esc(due.name)}</b> due ${g.fmtShort(due.preg.due)} (${daysTo(due.preg.due)}).</div>` : ''}
+  ${mine.some(a => age(a) < 365) ? `<div class="btns" style="margin:0 0 10px"><button class="btn sm sec" data-act="tagsheet">Ear tag lambs</button></div>` : ''}
   <div class="chips">${chip('all', 'All')}${chip('ewes', 'Ewes')}${chip('rams', 'Rams')}${chip('lambs', 'Lambs')}${chip('string', 'Show string')}${chip('open', 'Open ewes')}${chip('bred', 'Bred')}${chip('sale', 'For sale')}</div>
   ${list.length ? `<div class="cards">${list.map(a => animalCard(a)).join('')}</div>` : '<div class="empty">Nothing here yet.</div>'}`;
 }
@@ -335,7 +336,7 @@ function sheetAnimal(id) {
     if (!a.listing) b.push(`<button class="btn gold" data-act="sellsheet" data-id="${a.id}">Sell</button>`);
     else b.push(`<button class="btn sec" data-act="cancellot" data-id="${a.listing}">Pull from sale</button>`);
     b.push(`<button class="btn red" data-act="packer" data-id="${a.id}">Packer ${money(g.packerPrice(a))}</button>`);
-    actions = `<div class="btns">${b.join('')}</div><div class="row" style="margin-top:12px"><input type="text" id="rn" value="${esc(a.name)}" maxlength="30"><button class="btn sm sec" data-act="rename" data-id="${a.id}">Rename</button></div>`;
+    actions = `<div class="btns">${b.join('')}</div><div class="filters" style="margin-top:12px"><div><label class="f">Name</label><input type="text" id="rn" value="${esc(a.name)}" maxlength="30"></div><div><label class="f">Ear tag #</label><input type="text" id="tg" value="${esc(a.tag || '')}" maxlength="16"></div></div><div class="btns" style="margin-top:6px"><button class="btn sm sec" data-act="rename" data-id="${a.id}">Save name & tag</button></div>`;
   } else {
     actions = `<p class="sub">Owned by ${esc(g.flockName(a.owner))} ${stars(a.owner)}</p>`;
   }
@@ -351,6 +352,16 @@ function sheetFlock(fid) {
   return `<div class="sheet-head"><h2>${esc(f.name)}</h2><button class="x" data-act="close">×</button></div>
   <div class="kv"><div><span>State</span>${esc(STATES[f.state])}</div><div><span>Program</span>${f.type === 'breed' ? `${esc(f.breed)} breeder` : f.wt ? `Club · ${esc(f.wt)}` : 'Club lambs'}</div><div><span>Banners</span>${f.banners || 0}</div><div><span>Reputation</span>${stars(fid)}</div><div><span>Lambing</span>${{ early: 'Dec', winter: 'Jan–Feb', late: 'Mar', fall: 'Aug–Sep' }[f.season || (f.fall ? 'fall' : 'winter')]}</div><div><span>Head</span>${mine.length}</div></div>
   ${grp('Rams', mine.filter(a => a.sex === 'R' && age(a) >= 365))}${grp('Ewes', mine.filter(a => a.sex === 'E' && age(a) >= 365))}${grp('Lambs', mine.filter(a => age(a) < 365).sort((a, b) => a.birth - b.birth))}${grp('Wethers', mine.filter(a => a.sex === 'W' && age(a) >= 365))}`;
+}
+function sheetTags(ids, title) {
+  const s = S(); const list = ids.map(id => s.animals[id]).filter(a => a && a.owner === 'P');
+  if (!list.length) return `<div class="sheet-head"><h2>Ear tags</h2><button class="x" data-act="close">×</button></div><div class="empty">No lambs to tag.</div>`;
+  const first = list[0].tag || '';
+  const sug = (first.match(/^(.*?)(\d+)$/) ? first : `${s.flocks[0].prefix}-${String(g.yearOf(s.day)).slice(2)}001`);
+  return `<div class="sheet-head"><h2>${esc(title || 'Ear tags')}</h2><button class="x" data-act="close">×</button></div>
+  <div class="panel"><label class="f" style="margin-top:0">Auto-number from</label><div class="row"><input type="text" id="tagstart" value="${esc(sug)}" maxlength="16"><button class="btn sm" data-act="autotag" data-ids="${list.map(a => a.id).join(',')}">Number ${list.length}</button></div><p class="sub" style="margin:6px 0 0">Counts up in birth order — e.g. 27001, 27002, 27003… Any tag can still be edited below.</p></div>
+  ${list.sort((a, b) => a.birth - b.birth || a.id.localeCompare(b.id)).map(a => `<div class="tagrow"><div class="pic">${sheep(a, 50)}</div><div class="grow"><b>${esc(a.name)}</b><div class="sub">${esc(g.breedLabel(a))} · ${g.sexText(a)} · ${g.ageText(a)} · out of ${esc(a.damName)}</div></div><input type="text" value="${esc(a.tag || '')}" data-on="savetag" data-id="${a.id}" maxlength="16"></div>`).join('')}
+  <div class="btns"><button class="btn" data-act="close">Done</button></div>`;
 }
 function sheetBreed(id) {
   const s = S(); const e = s.animals[id];
@@ -514,12 +525,26 @@ function renderSetup() {
     <div class="note">Your home state sets your state fair, county fair and local jackpots. The national shows — Denver, Fort Worth, San Antonio, Houston, Keystone and NAILE — are open to everyone. 150 flocks across the country start alongside you, and more join every month.</div>
     <div class="foot"><div class="grow sub">Step 1 of 4</div><button class="btn" data-act="setup1">Next</button></div></div>`;
   } else if (st.step === 4) {
-    const chosen = [...st.opts.ewes.filter(a => st.ewes.includes(a.id)), st.opts.rams.find(a => a.id === st.ram)];
-    const tagOK = new Set([chosen[0].id, chosen[1].id, chosen[4].id]);
-    h = `<div class="setup"><h1>Name your sheep</h1><p class="sub">Give each one a name. You can set your own ear tag numbers on two ewes and your ram; the others keep the flock tags.</p>
-    ${chosen.map(a => `<div class="panel"><div class="row"><div class="pic" style="width:80px;flex:none">${sheep(a, 78)}</div><div class="grow"><b>${esc(g.breedLabel(a))} ${a.sex === 'R' ? 'ram' : 'ewe'}</b><div class="sub">${g.ageText(a)} · ${Math.round(a.wt)} lb</div></div></div>
-      <label class="f">Name</label><input type="text" data-nm="${a.id}" value="${esc(a.name)}" maxlength="30">
-      ${tagOK.has(a.id) ? `<label class="f">Ear tag # ${a.sex === 'R' ? '(ram)' : ''}</label><input type="text" data-tg="${a.id}" value="${esc(a.tag)}" maxlength="14">` : `<p class="sub" style="margin:8px 0 0">Tag ${esc(a.tag)}</p>`}</div>`).join('')}
+    const ewes = st.opts.ewes.filter(a => st.ewes.includes(a.id)); const ram = st.opts.rams.find(a => a.id === st.ram);
+    if (!st.cust || !ewes.some(e => e.id === st.cust.real) || !ewes.some(e => e.id === st.cust.max) || st.cust.real === st.cust.max) st.cust = { real: ewes[0].id, max: ewes[1].id };
+    st.vals = st.vals || {};
+    const modeOf = a => a.id === ram.id || a.id === st.cust.max ? 'max' : a.id === st.cust.real ? 'real' : null;
+    const sliders = a => {
+      const mode = modeOf(a); if (!mode) return '';
+      const v = st.vals[a.id] || (st.vals[a.id] = { t: g.traitScores(a), e: Object.fromEntries(EPDS.map(e => [e.k, a.bv[e.k]])) });
+      const row = (key, label, val, unit, dec) => { const [mn, mx, step] = g.customRange(a, key, mode); const vv = Math.min(mx, Math.max(mn, val)); return `<div class="cs"><span>${label}</span><input type="range" min="${mn}" max="${mx}" step="${step}" value="${vv}" data-cv="${a.id}|${key}"><b data-cvl="${a.id}|${key}">${dec ? signed(vv, dec) : Math.round(vv)}${unit}</b></div>`; };
+      return `<div class="custom"><div class="ct">${mode === 'max' ? 'Custom genetics · no limits (up to 100% potential)' : 'Custom genetics · realistic breed range'}</div>
+        <label class="f" style="margin-top:4px">Trait scores</label>${TRAITS.map(t => row(t, TRAIT_LABEL[t], v.t[t], '', 0)).join('')}
+        ${a.reg ? `<label class="f">EPDs</label>${EPDS.map(e => row(e.k, e.label, v.e[e.k], ' ' + e.unit, e.dec)).join('')}` : '<p class="sub" style="margin:6px 0 0">Crossbred, commercial and wether-type sheep don’t carry EPDs — trait scores only.</p>'}</div>`;
+    };
+    const chosen = [...ewes, ram];
+    h = `<div class="setup"><h1>Name & customize</h1><p class="sub">Name every animal and set its ear tag. One ewe gets custom genetics within realistic breed limits; another ewe and your ram can be set as high as a sheep can go. Registered sheep get EPDs and trait scores; crossbreds and wether-types get trait scores only.</p>
+    <div class="panel"><label class="f" style="margin-top:0">Custom ewe — realistic limits</label><select data-on="custpick" data-k="real">${ewes.map(e => `<option value="${e.id}" ${st.cust.real === e.id ? 'selected' : ''} ${st.cust.max === e.id ? 'disabled' : ''}>${esc(e.name)} — ${esc(g.breedLabel(e))}</option>`).join('')}</select>
+    <label class="f">Custom ewe — no limits</label><select data-on="custpick" data-k="max">${ewes.map(e => `<option value="${e.id}" ${st.cust.max === e.id ? 'selected' : ''} ${st.cust.real === e.id ? 'disabled' : ''}>${esc(e.name)} — ${esc(g.breedLabel(e))}</option>`).join('')}</select>
+    <p class="sub" style="margin:8px 0 0">Your ram is always fully customizable.</p></div>
+    ${chosen.map(a => `<div class="panel"><div class="row"><div class="pic" style="width:80px;flex:none">${sheep(a, 78)}</div><div class="grow"><b>${esc(g.breedLabel(a))} ${a.sex === 'R' ? 'ram' : 'ewe'}</b>${a.reg ? ' <span class="b reg">Reg</span>' : ''}<div class="sub">${g.ageText(a)} · ${Math.round(a.wt)} lb</div></div></div>
+      <div class="filters" style="margin:8px 0 0"><div><label class="f">Name</label><input type="text" data-nm="${a.id}" value="${esc(st.names?.[a.id] ?? a.name)}" maxlength="30"></div><div><label class="f">Ear tag #</label><input type="text" data-tg="${a.id}" value="${esc(st.tags?.[a.id] ?? a.tag)}" maxlength="16"></div></div>
+      ${sliders(a)}</div>`).join('')}
     <div class="foot"><button class="btn sec" data-act="setupback">Back</button><div class="grow sub">Step 4 of 4</div><button class="btn" data-act="setup4">Start my flock</button></div></div>`;
   } else {
     const opts = st.opts;
@@ -533,6 +558,11 @@ function renderSetup() {
   app.innerHTML = h;
 }
 
+function keepSetupInputs() {
+  const st = UI.setup; st.names = st.names || {}; st.tags = st.tags || {};
+  document.querySelectorAll('[data-nm]').forEach(i => st.names[i.dataset.nm] = i.value);
+  document.querySelectorAll('[data-tg]').forEach(i => st.tags[i.dataset.tg] = i.value);
+}
 // ---------- actions ----------
 const A = {
   tab: el => { UI.tab = el.dataset.tab; window.scrollTo(0, 0); render(); },
@@ -546,7 +576,7 @@ const A = {
   gosires: () => { closeSheet(); UI.tab = 'market'; UI.mtab = 'browse'; UI.mfilter = 'semen'; render(); },
   play: () => { const s = S(); s.paused = !s.paused; lastTick = performance.now(); save(); renderHeader(); },
   speed: () => { const s = S(); const i = SPEEDS.findIndex(x => x[0] === s.settings.speed); s.settings.speed = SPEEDS[(i + 1) % SPEEDS.length][0]; flash(SPEEDS[(i + 1) % SPEEDS.length][2]); save(); renderHeader(); },
-  adv: el => { const n = +el.dataset.n; const ran = g.advance(n); if (ran < n) flash('Stopped early — something needs your attention.', 'show'); drainToasts(); save(); refreshAll(); },
+  adv: el => { const n = +el.dataset.n; const ran = g.advance(n); if (ran < n) flash('Stopped early — something needs your attention.', 'show'); drainToasts(); save(); refreshAll(); newLambPopup(); },
   animal: el => { const prev = UI.sheet && UI.sheetFlock; UI.backFlock = prev || null; openSheet(() => sheetAnimal(el.dataset.id)); },
   flock: el => { UI.sheetFlock = el.dataset.id; openSheet(() => sheetFlock(el.dataset.id)); },
   back: el => openSheet(() => sheetAnimal(el.dataset.id)),
@@ -572,7 +602,14 @@ const A = {
   dosell: el => { const id = el.dataset.id; const d = $('#sd'); if (result(g.listAnimal(id, UI.sellMode || 'auction', +$('#sp').value, d ? +d.value : 30), 'Consigned to the market.')) openSheet(() => sheetAnimal(id)); },
   cancellot: el => { g.cancelListing(el.dataset.id); result(null, 'Pulled from the sale.'); },
   packer: el => { const a = S().animals[el.dataset.id]; if (!confirm(`Send ${a.name} to the packer for ${money(g.packerPrice(a))}? This can’t be undone.`)) return; const p = g.sellPacker(a.id); closeSheet(); result(null, `Sold to the packer for ${money(p)}.`); },
-  rename: el => { g.rename(el.dataset.id, $('#rn').value); result(null, 'Renamed.'); },
+  rename: el => { g.rename(el.dataset.id, $('#rn').value); g.setTag(el.dataset.id, $('#tg').value); result(null, 'Saved.'); },
+  tagsheet: () => { const ids = g.myAnimals().filter(a => g.ageDays(a) < 365).map(a => a.id); openSheet(() => sheetTags(ids, 'Tag this year’s lambs')); },
+  autotag: el => {
+    const start = $('#tagstart').value.trim(); const m = start.match(/^(.*?)(\d+)$/);
+    const ids = el.dataset.ids.split(','); const list = ids.map(id => S().animals[id]).filter(Boolean).sort((a, b) => a.birth - b.birth || a.id.localeCompare(b.id));
+    list.forEach((a, i) => { g.setTag(a.id, m ? m[1] + String(+m[2] + i).padStart(m[2].length, '0') : `${start}${i + 1}`); });
+    save(); renderSheet(); flash(`Tagged ${list.length} lambs.`, 'show');
+  },
   ex: el => { g.setCare(el.dataset.id, { ex: +el.dataset.v }); save(); renderSheet(); },
   lot: el => openSheet(() => sheetLot(el.dataset.id)),
   snap: el => openSheet(() => sheetSnap(el.dataset.id)),
@@ -607,7 +644,7 @@ const A = {
     g.createWorld({ flockName: st.name, home: st.home, county: st.county });
     st.opts = g.starterOptions(); st.ewes = []; st.ram = null; st.step = 2; window.scrollTo(0, 0); renderSetup();
   },
-  setupback: () => { UI.setup.step--; renderSetup(); },
+  setupback: () => { if (UI.setup.step === 4) keepSetupInputs(); UI.setup.step--; renderSetup(); },
   pick: el => {
     const st = UI.setup; const id = el.dataset.id;
     if (st.step === 2) { if (st.ewes.includes(id)) st.ewes = st.ewes.filter(x => x !== id); else if (st.ewes.length < 4) st.ewes.push(id); else flash('You can pick 4 ewes — tap one to swap it out.'); }
@@ -619,8 +656,16 @@ const A = {
   setup4: () => {
     const st = UI.setup;
     const all = [...st.opts.ewes, ...st.opts.rams];
-    document.querySelectorAll('[data-nm]').forEach(i => { const a = all.find(x => x.id === i.dataset.nm); if (a && i.value.trim()) a.name = i.value.trim().slice(0, 30); });
-    document.querySelectorAll('[data-tg]').forEach(i => { const a = all.find(x => x.id === i.dataset.tg); if (a && i.value.trim()) a.tag = i.value.trim().slice(0, 14); });
+    keepSetupInputs();
+    Object.entries(st.names || {}).forEach(([id, v]) => { const a = all.find(x => x.id === id); if (a && v.trim()) a.name = v.trim().slice(0, 30); });
+    Object.entries(st.tags || {}).forEach(([id, v]) => { const a = all.find(x => x.id === id); if (a && v.trim()) a.tag = v.trim().slice(0, 16); });
+    const custIds = [st.cust.real, st.cust.max, st.ram];
+    for (const id of custIds) {
+      const a = all.find(x => x.id === id); const v = st.vals?.[id]; if (!a || !v) continue;
+      if (a.reg) EPDS.forEach(e => g.setCustomEPD(a, e.k, +v.e[e.k]));
+      TRAITS.forEach(t => g.setCustomTrait(a, t, +v.t[t]));
+      a.custom = id === st.cust.real ? 'real' : 'max';
+    }
     app.innerHTML = '<div class="setup"><h1>Building the country…</h1><p class="sub">Stocking 150 flocks across the U.S.</p></div>';
     setTimeout(() => {
       const ewes = st.opts.ewes.filter(a => st.ewes.includes(a.id)); const ram = st.opts.rams.find(a => a.id === st.ram);
@@ -650,20 +695,36 @@ const ON = {
     f.text().then(t => { const s = JSON.parse(t); if (!s.flocks || !s.animals) throw new Error('bad file'); s.toasts = []; s.paused = true; g.G.s = s; save(true); UI.tab = 'barn'; render(); flash('Backup restored.', 'show'); }).catch(() => alert('That file isn’t a ShowLamb backup.'));
   },
   qty: () => { },
+  custpick: el => { keepSetupInputs(); const st = UI.setup; st.cust[el.dataset.k] = el.value; const y = window.scrollY; renderSetup(); window.scrollTo(0, y); },
+  savetag: el => { g.setTag(el.dataset.id, el.value); save(); },
   mbreed: el => { UI.mbreed = el.value; render(); },
   fstate: el => { UI.fstate = el.value; render(); },
   msort: el => { UI.msort = el.value; render(); },
 };
-document.addEventListener('input', e => { const el = e.target.closest('[data-on]'); if (el && el.dataset.on === 'care' && el.dataset.k === 'lbs') ON.care(el); });
+document.addEventListener('input', e => {
+  const cv = e.target.closest('[data-cv]');
+  if (cv) {
+    const [id, key] = cv.dataset.cv.split('|'); const v = UI.setup.vals[id]; const ep = EPDS.find(x => x.k === key);
+    if (ep) v.e[key] = +cv.value; else v.t[key] = +cv.value;
+    const lab = document.querySelector(`[data-cvl="${cv.dataset.cv}"]`); if (lab) lab.textContent = ep ? `${signed(+cv.value, ep.dec)} ${ep.unit}` : Math.round(+cv.value);
+    return;
+  }
+  const el = e.target.closest('[data-on]'); if (el && el.dataset.on === 'care' && el.dataset.k === 'lbs') ON.care(el);
+});
 document.addEventListener('change', e => { const el = e.target.closest('[data-on]'); if (!el) return; if (el.dataset.on === 'care' && el.dataset.k === 'lbs') return; const f = ON[el.dataset.on]; if (f) f(el); });
 
+function newLambPopup() {
+  const s = S(); if (!s?.newLambs?.length || UI.sheet) return;
+  const ids = s.newLambs.filter(id => s.animals[id]); s.newLambs = [];
+  if (ids.length) openSheet(() => sheetTags(ids, ids.length === 1 ? 'New lamb — tag it' : `${ids.length} new lambs — tag them`));
+}
 // ---------- clock ----------
 let lastTick = performance.now();
 setInterval(() => {
   const now = performance.now(); const dt = (now - lastTick) / 1000; lastTick = now;
   const s = S(); if (!s?.started || document.hidden) return;
   const n = g.tickClock(Math.min(dt, 3));
-  drainToasts();
+  drainToasts(); newLambPopup();
   if (n > 0) {
     save();
     const typing = document.activeElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName);

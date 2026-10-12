@@ -170,3 +170,9 @@ input[type=range] { width: 100%; accent-color: var(--barn); }
 .pc small { font-size: 10.5px; color: var(--muted); line-height: 1.2; }
 .pc .pr { font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
 .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+
+.custom { margin-top: 10px; background: #f6f3ea; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.custom .ct { font-weight: 700; font-size: 13px; color: #7a5a10; }
+.cs { display: grid; grid-template-columns: 96px 1fr 70px; align-items: center; gap: 8px; font-size: 13px; margin: 2px 0; }
+.cs b { text-align: right; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.tagrow { display: grid; grid-template-columns: 54px 1fr 110px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }

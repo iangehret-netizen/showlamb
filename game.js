@@ -332,6 +332,16 @@ export function register(id) {
   return null;
 }
 export function wether(id) { const a = S().animals[id]; if (a.sex === 'R') { a.sex = 'W'; a.reg = a.reg; } }
+export function setTag(id, tag) { const a = S().animals[id]; if (a && tag.trim()) a.tag = tag.trim().slice(0, 16); }
+// Starter customization. mode: 'real' (bottom–top 1% of the breed) or 'max' (up to 100% of sheep potential)
+export function customRange(a, key, mode) {
+  const e = EPDS.find(x => x.k === key);
+  if (e) { const k = mode === 'max' ? 4 : 2.33; return [-k * e.sd, k * e.sd, e.sd / 20]; }
+  const b = a.base[key];
+  return mode === 'max' ? [1, 99, 1] : [Math.max(1, Math.round(b - 20)), Math.min(92, Math.round(b + 30)), 1];
+}
+export function setCustomEPD(a, key, v) { a.bv[key] = v; if (a.err) a.err[key] = 0; }
+export function setCustomTrait(a, t, target) { const cur = phen(a, t); a.bv[t] += target - cur; if (a.pe) a.pe[t] = a.pe[t] || 0; }
 export function rename(id, name) { const a = S().animals[id]; if (name.trim()) a.name = name.trim().slice(0, 30); }
 export function testAnimal(id, kind) {
   const s = S(); const a = s.animals[id]; const cost = kind === 'scrapie' ? 30 : 35;
@@ -1148,6 +1158,7 @@ function lamb(ewe) {
   }
   ewe.lambed = s.day;
   if (ewe.owner === 'P') {
+    s.newLambs = (s.newLambs || []).concat(born.map(a => a.id));
     s.stats.born += born.length;
     if (born.length) achieve('first_lamb');
     if (p.count === 3) achieve('triplets');
