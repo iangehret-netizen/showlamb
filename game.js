@@ -648,12 +648,13 @@ function aiListings() {
 
 // ---------- sire directory ----------
 export const TANK_FEE = 10;
+export const SEVEN_MO = 213;
 export const DIRECTORY_FEE = 100, COLLECT_FEE = 200, LEASE_DAYS = 60;
 export const ramHome = r => !(r.away && r.away > S().day);
 export const usableRams = () => living().filter(a => a.sex === 'R' && ageDays(a) >= 200 && ((a.owner === 'P' && ramHome(a)) || (a.leasedTo === 'P' && a.leaseUntil > S().day)));
 export function collectSemen(ramId) {
   const s = S(); const r = s.animals[ramId];
-  if (!r || r.owner !== 'P' || r.sex !== 'R' || ageDays(r) < 210) return 'Rams must be 7+ months old to collect.';
+  if (!r || r.owner !== 'P' || r.sex !== 'R' || ageDays(r) < SEVEN_MO) return 'Rams must be 7+ months old to collect.';
   if (!ramHome(r)) return `${r.name} is away on lease.`;
   if (s.cash < COLLECT_FEE) return `Collection costs ${money(COLLECT_FEE)}.`;
   addCash(-COLLECT_FEE, `Semen collection — ${r.name}`);
@@ -666,7 +667,7 @@ export function collectSemen(ramId) {
 // opts: { straws, price, lease } — must offer collected straws and/or a lease price
 export function listSire(ramId, opts) {
   const s = S(); const r = s.animals[ramId];
-  if (r.sex !== 'R' || ageDays(r) < 200) return 'Only rams 7+ months old can be listed.';
+  if (r.sex !== 'R' || ageDays(r) < SEVEN_MO) return 'Only rams 7+ months old can be listed.';
   if (s.directory.some(d => d.ramId === ramId && d.owner === 'P')) return 'Already in the directory.';
   const straws = Math.max(0, Math.round(opts.straws || 0)); const lease = Math.max(0, Math.round(opts.lease || 0));
   const t = s.tank.find(x => x.snap.id === ramId);
@@ -1248,7 +1249,7 @@ export function simDay() {
     }
     // AI flock management of young rams
     if (age === 60 && a.sex === 'R') {
-      if (a.owner === 'P') { if (!a.reg) { a.sex = 'W'; } }
+      if (a.owner === 'P') { /* your ram lambs stay intact until you wether them */ }
       else if (!a.reg || Math.random() > 0.3) a.sex = 'W';
       else a.keep = true;
     }
@@ -1413,10 +1414,39 @@ export function tickClock(realSeconds) {
   if (n >= 6) s.frac = Math.min(s.frac, 1);
   return n;
 }
+// Skip ahead the full amount — auto-pauses don't interrupt a skip
 export function advance(days) {
-  const s = S(); let n = 0; s.paused = false;
-  while (n < days) { simDay(); n++; if (s.paused) break; }
+  const s = S(); let n = 0;
+  while (n < days) { s.paused = false; simDay(); n++; }
   s.paused = true; s.frac = 0;
   return n;
+}
+export function daysToNextMonth() { const t = dateOf(S().day); const nx = Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate()); return Math.round((nx - t.getTime()) / 864e5); }
+// Bulk entries: each animal goes into every division it qualifies for that you've ticked; out-of-weight lambs are skipped
+export function bulkPlan(ids, keys, divs) {
+  const s = S(); const plan = []; let fee = 0, skipped = 0;
+  for (const key of keys) {
+    const sh = findShow(key); if (!sh || sh.day <= s.day) continue;
+    const e = s.entries[key] || {}; const item = { show: sh, market: [], breeding: [], commercial: [] };
+    for (const id of ids) {
+      const a = s.animals[id]; if (!a || a.owner !== 'P' || a.listing) continue;
+      if (divs.market && !marketEligible(a, sh)) {
+        const w = projectedWeight(a, sh.day - s.day);
+        if (w < sh.minWt || w > sh.maxWt) skipped++; else if (!(e.market || []).includes(id)) item.market.push(id);
+      }
+      if (divs.breeding && sh.breeding && !breedingEligible(a, sh) && !(e.breeding || []).includes(id)) item.breeding.push(id);
+      if (divs.commercial && sh.commercial && !commercialEligible(a, sh) && !(e.commercial || []).includes(id)) item.commercial.push(id);
+    }
+    const n = item.market.length + item.breeding.length + item.commercial.length;
+    if (n) { plan.push(item); fee += n * sh.fee; }
+  }
+  return { plan, fee, skipped, head: plan.reduce((t, p) => t + p.market.length + p.breeding.length + p.commercial.length, 0) };
+}
+export function bulkEnter(ids, keys, divs) {
+  const s = S(); const b = bulkPlan(ids, keys, divs);
+  if (!b.head) return 'Nothing to enter — no eligible animals for those shows.';
+  if (b.fee > s.cash) return `Entry fees total ${money(b.fee)} — not enough cash.`;
+  for (const p of b.plan) for (const d of ['market', 'breeding', 'commercial']) if (p[d].length) enterShow(p.show, p[d], d);
+  return null;
 }
 export { S as state };
