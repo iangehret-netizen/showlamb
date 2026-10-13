@@ -31,7 +31,8 @@ const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.f
 // ---------- helpers ----------
 export const money = n => (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString();
 const uid = p => p + (S().nextId++).toString(36);
-export const flock = id => S().flocks.find(f => f.id === id);
+let _fm = null, _fmS = null, _fmN = -1;
+export const flock = id => { const s = S(); if (_fmS !== s || _fmN !== s.flocks.length) { _fm = new Map(s.flocks.map(f => [f.id, f])); _fmS = s; _fmN = s.flocks.length; } return _fm.get(id); };
 export const flockName = id => id === 'LOCAL' ? 'Local exhibitor' : (flock(id)?.name || 'Unknown flock');
 export const isPlayer = a => a && a.owner === 'P';
 export const ageDays = a => S().day - a.birth;
@@ -49,8 +50,11 @@ export function sexText(a) {
   return d < 365 ? 'Ewe lamb' : (d < 730 ? 'Yearling ewe' : 'Ewe');
 }
 export const breedLabel = a => a.breed === 'Crossbred' ? (a.face === 'white' ? 'Whiteface cross' : 'Blackface cross') : (a.breed === 'Commercial' ? 'Commercial' : a.breed);
-export const living = () => Object.values(S().animals);
+let _lv = null, _lvS = null, _lvV = -1, _ver = 0;
+export const bumpAnimals = () => { _ver++; };
+export const living = () => { const s = S(); if (_lvS !== s || _lvV !== _ver) { _lv = Object.values(s.animals); _lvS = s; _lvV = _ver; } return _lv; };
 export const myAnimals = () => living().filter(a => a.owner === 'P');
+function byOwner() { const m = new Map(); for (const a of living()) { let l = m.get(a.owner); if (!l) m.set(a.owner, l = []); l.push(a); } return m; }
 const emit = () => G.listeners.forEach(f => f());
 
 export function news(text, kind = 'info', mine = false) {
@@ -195,11 +199,11 @@ export function makeFounder({ breed, sex, ageDays: age, owner, q = 0, comp, face
   if (a.scr === 'QR') a.scr = 'RQ';
   if (owner !== 'LOCAL') { a.ped = fakePed(a.breed, 3); a.sireName = a.ped.s.n; a.damName = a.ped.d.n; }
   a.wt = weightForAge(age, frameOf(a), sex) * (1 + a.bv.PWG / 60);
-  a.name = animalName(f, sex); a.tag = owner === 'LOCAL' ? '' : nextTag(f);
+  a.tag = owner === 'LOCAL' ? '' : nextTag(f); a.name = owner === 'LOCAL' ? animalName(f, sex) : a.tag; a.named = owner === 'LOCAL';
   return a;
 }
-const addAnimal = a => { S().animals[a.id] = a; return a; };
-function removeAnimal(id) { delete S().animals[id]; }
+const addAnimal = a => { S().animals[a.id] = a; _ver++; return a; };
+function removeAnimal(id) { delete S().animals[id]; _ver++; }
 
 function offspring(dam, sire, owner, recipient) {
   const s = S(); const f = flock(owner);
@@ -241,17 +245,16 @@ function offspring(dam, sire, owner, recipient) {
     damMilk: (recipient || dam).bv.MILK, et: !!recipient, recipName: recipient?.name,
   };
   a.wt = Math.max(5, 9 + a.bv.BW * 1.2 + randn() * 0.8);
-  a.name = animalName(f, a.sex); a.tag = nextTag(f);
+  a.tag = nextTag(f); a.name = a.tag; a.named = false;
   return a;
 }
 
 function litterSize(ewe) {
   const age = ageDays(ewe);
-  let m = ewe.base.prol + ewe.bv.NLB / 40 + (age < 600 ? -0.35 : age > 2200 ? -0.1 : 0.08);
-  m = clamp(m, 1.0, 2.6);
-  let n = 1;
-  if (Math.random() < clamp(m - 1, 0, 0.85)) { n = 2; if (Math.random() < clamp((m - 1.65) * 0.55, 0, 0.35)) n = 3; }
-  return n;
+  const f = clamp(ewe.base.prol - 1.6 + ewe.bv.NLB / 40 + (age < 600 ? -0.25 : age > 2200 ? -0.08 : 0.03), -0.5, 0.5);
+  const p1 = clamp(0.09 - f * 0.12, 0.02, 0.25), p3 = clamp(0.10 + f * 0.12, 0.03, 0.2), p4 = clamp(0.01 + f * 0.02, 0, 0.03);
+  const r = Math.random();
+  return r < p1 ? 1 : r < p1 + p3 ? 3 : r < p1 + p3 + p4 ? 4 : 2;
 }
 const OUT_SEASON_OK = ['Dorset', 'Horned Dorset', 'Dorset Advantage', 'Katahdin', 'Dorper', 'White Dorper', 'Merino', 'Rambouillet'];
 export function conceptionRate(ewe, method) {
@@ -282,7 +285,7 @@ export function bulkBreed(ids, method, src) {
     let err;
     if (method === 'Natural') err = breedNatural(id, src.ramId);
     else if (method === 'AI') { const i = s.tank.findIndex(t => t.snap === tankSnap); err = i < 0 ? 'Out of straws.' : breedAI(id, i); }
-    else err = implant(src.embId, id);
+    else err = implant(src.embId, id, src.n || 1);
     (err ? left : done).push({ name: e.name, err });
   }
   return { done, left };
@@ -333,14 +336,19 @@ export function flush(donorId, sire) { // sire: {ramId} or {tankIdx}
   news(`Flushed ${d.name} to ${snap.name}: ${n} transferable embryo${n === 1 ? '' : 's'}.`, n ? 'good' : 'bad', true);
   return null;
 }
-export function implant(embId, recipId) {
+export function implant(embId, recipId, n = 1) {
   const s = S(); const e = s.embryos.find(x => x.id === embId); const r = s.animals[recipId];
+  n = Math.min(2, Math.max(1, n));
   if (!e || e.count < 1) return 'No embryos.';
+  if (e.count < n) n = e.count;
   if (!canBreed(r)) return 'Recipient is not available.';
-  if (s.cash < 175) return 'Transfer costs $175.';
-  addCash(-175, `Embryo transfer into ${r.name}`);
-  e.count--; if (e.count <= 0) s.embryos = s.embryos.filter(x => x !== e);
-  settle(r, e.sire, 'ET', e.dam);
+  if (s.cash < 175 * n) return `Transfer costs ${money(175 * n)}.`;
+  addCash(-175 * n, `Embryo transfer (${n}) into ${r.name}`);
+  e.count -= n; if (e.count <= 0) s.embryos = s.embryos.filter(x => x !== e);
+  const p = conceptionRate(r, 'ET');
+  let took = 0; for (let i = 0; i < n; i++) if (Math.random() < p) took++;
+  delete r.synced;
+  r.preg = { sire: e.sire, method: 'ET', bredDay: s.day, check: s.day + 30, ok: took > 0, due: s.day + GESTATION + irnd(-3, 3), donor: e.dam, count: took, embryos: n };
   return null;
 }
 
@@ -371,6 +379,7 @@ export function buildPen(name) {
   pens().push({ id: uid('p'), name: (name || `Pen ${pens().length + 1}`).slice(0, 24), cap: PEN_CAP });
   return null;
 }
+export function reorderPens(ids) { const ps = pens(); const m = new Map(ps.map(p => [p.id, p])); const out = ids.map(id => m.get(id)).filter(Boolean); ps.forEach(p => { if (!out.includes(p)) out.push(p); }); S().pens = out; }
 export function renamePen(id, name) { const p = pens().find(x => x.id === id); if (p && name.trim()) p.name = name.trim().slice(0, 24); }
 export function movePen(aid, penId) {
   const a = S().animals[aid]; if (!a) return 'Not found.';
@@ -378,7 +387,7 @@ export function movePen(aid, penId) {
   if (penRoom(penId) <= 0) return `That pen is full (${PEN_CAP} head max).`;
   a.pen = penId; return null;
 }
-export function setTag(id, tag) { const a = S().animals[id]; if (a && tag.trim()) a.tag = tag.trim().slice(0, 16); }
+export function setTag(id, tag) { const a = S().animals[id]; if (a && tag.trim()) { a.tag = tag.trim().slice(0, 16); if (a.named === false) a.name = a.tag; } }
 // Starter customization. mode: 'real' (bottom–top 1% of the breed) or 'max' (up to 100% of sheep potential)
 export function customRange(a, key, mode) {
   const e = EPDS.find(x => x.k === key);
@@ -388,7 +397,7 @@ export function customRange(a, key, mode) {
 }
 export function setCustomEPD(a, key, v) { a.bv[key] = v; if (a.err) a.err[key] = 0; }
 export function setCustomTrait(a, t, target) { const cur = phen(a, t); a.bv[t] += target - cur; if (a.pe) a.pe[t] = a.pe[t] || 0; }
-export function rename(id, name) { const a = S().animals[id]; if (name.trim()) a.name = name.trim().slice(0, 30); }
+export function rename(id, name) { const a = S().animals[id]; const n = name.trim().slice(0, 30); if (n && n !== a.tag) { a.name = n; a.named = true; } else { a.name = a.tag; a.named = false; } }
 export function testAnimal(id, kind) {
   const s = S(); const a = s.animals[id]; const cost = kind === 'scrapie' ? 30 : 35;
   if (a.tested[kind]) return 'Already tested.';
@@ -469,6 +478,43 @@ export function listAnimal(id, mode, price, days) {
   if (mode === 'auction') { L.bidders = makeBidders(fairValue(a), a.owner, lotType(a), L.end - s.day); L.cur = L.price; }
   a.listing = L.id; s.listings.push(L);
   return null;
+}
+// Group sale: each picked lamb becomes its own timed auction, same opening bid, all close together
+export function listGroup(ids, price, days) {
+  let n = 0; const errs = [];
+  for (const id of ids) { const err = listAnimal(id, 'auction', price, days); if (err) errs.push(`${S().animals[id]?.name}: ${err}`); else n++; }
+  return { n, errs };
+}
+// Private treaty — make an offer on any animal on another farm
+export function privateOffer(aid, amount) {
+  const s = S(); const a = s.animals[aid];
+  if (!a || a.owner === 'P' || a.owner === 'LOCAL') return { err: 'Not available.' };
+  if (a.listing) return { err: 'This one is already on the market — bid or buy it there.' };
+  if (a.leasedTo || (a.away && a.away > s.day)) return { err: 'He’s out on lease right now.' };
+  amount = Math.round(amount);
+  if (amount > s.cash) return { err: 'You don’t have that much cash.' };
+  s.offers = s.offers || {};
+  const prev = s.offers[aid];
+  const ask = prev?.ask || Math.round(fairValue(a) * repMult(a.owner) * (a.keep || (a.record || []).some(r => r.banner) ? rnd(1.35, 1.7) : rnd(1.05, 1.3)) / 25) * 25;
+  if (amount >= ask) { privateSale(a, amount); delete s.offers[aid]; return { result: 'accepted', price: amount }; }
+  if (amount >= ask * 0.6) { s.offers[aid] = { ask, counter: ask, until: s.day + 7 }; return { result: 'counter', price: ask }; }
+  s.offers[aid] = { ask, until: s.day + 7 };
+  return { result: 'declined' };
+}
+export function acceptCounter(aid) {
+  const s = S(); const o = s.offers?.[aid]; const a = s.animals[aid];
+  if (!o || !o.counter || o.until < s.day || !a || a.owner === 'P') return 'That counter-offer has expired.';
+  if (s.cash < o.counter) return 'Not enough cash.';
+  privateSale(a, o.counter); delete s.offers[aid]; return null;
+}
+function privateSale(a, price) {
+  const s = S(); const seller = a.owner;
+  addCash(-price, `Private treaty — ${a.name} from ${flockName(seller)}`);
+  a.owner = 'P'; a.keep = false; a.string = false; a.pen = 'main'; a.care = a.care || defaultCare();
+  if (a.preg && !a.preg.ok && s.day >= a.preg.check) delete a.preg;
+  s.directory = s.directory.filter(d => d.ramId !== a.id || d.owner === 'P');
+  recordSale({ name: a.name, breed: breedLabel(a), type: sexText(a), price, seller: flockName(seller), buyer: s.flocks[0].name, day: s.day, mine: true });
+  news(`Private treaty: you bought ${a.name} (${breedLabel(a)} ${sexText(a).toLowerCase()}) from ${flockName(seller)} for ${money(price)}.`, 'good', true);
 }
 export function listEmbryos(embId, count, mode, price, days) {
   const s = S(); const e = s.embryos.find(x => x.id === embId);
@@ -625,7 +671,7 @@ function aiListings() {
   const s = S(); const m = monthOf(s.day);
   if (s.listings.filter(l => l.seller !== 'P').length > 150) return;
   const flocks = s.flocks.filter(x => x.id !== 'P');
-  const own = f => living().filter(a => a.owner === f.id && !a.listing);
+  const idx = byOwner(); const own = f => (idx.get(f.id) || []).filter(a => !a.listing && S().animals[a.id] && a.owner === f.id);
   const prospect = (m >= 1 && m <= 5) || (m >= 7 && m <= 9);
   const sales = prospect ? irnd(1, 4) : irnd(0, 1);
   for (let i = 0; i < sales; i++) {
@@ -674,6 +720,7 @@ function aiListings() {
 
 // ---------- sire directory ----------
 export const TANK_FEE = 10;
+export const START_FLOCKS = 350;
 export const SEVEN_MO = 213;
 export const DIRECTORY_FEE = 100, COLLECT_FEE = 200, LEASE_DAYS = 60;
 export const ramHome = r => !(r.away && r.away > S().day);
@@ -889,7 +936,7 @@ function localLamb(show, kind, breed) {
 function attendingFlocks(show) {
   const s = S(); const t = TIER[show.tier];
   let pool = s.flocks.filter(f => f.id !== 'P');
-  const scale = Math.max(1, pool.length / 150);
+  const scale = Math.max(1, pool.length / 250);
   if (show.jackpot) { const reg = [show.host, ...(NEIGHBORS[show.host] || [])]; pool = pool.filter(f => reg.includes(f.state) || Math.random() < 0.04); }
   else if (show.tier === 'county') pool = pool.filter(f => f.state === s.home);
   else if (show.tier === 'state') pool = pool.filter(f => f.state === s.home || Math.random() < 0.06);
@@ -1061,8 +1108,8 @@ function seriesPoints(show, a, pts) {
   const key = `${show.series}|${yearOf(show.day)}`;
   const sr = s.series[key] || (s.series[key] = { name: show.series, year: yearOf(show.day), host: show.host, animals: {}, farms: {}, shows: 0, lastDay: 0 });
   if (sr.lastDay !== show.day || sr.lastKey !== show.key) { sr.shows++; sr.lastDay = show.day; sr.lastKey = show.key; }
-  const r = sr.animals[a.id] || (sr.animals[a.id] = { name: a.name, tag: a.tag, owner: a.owner, flock: flockName(a.owner), breed: breedLabel(a), pts: 0 });
-  r.pts += pts; r.name = a.name;
+  const r = sr.animals[a.id] || (sr.animals[a.id] = { name: a.name, tag: a.tag, owner: a.owner, flock: flockName(a.owner), breed: breedLabel(a), sex: a.sex, pts: 0 });
+  r.pts += pts; r.name = a.name; r.sex = a.sex;
   sr.farms[a.owner] = (sr.farms[a.owner] || 0) + pts;
 }
 export const SERIES_PRIZES = [1000, 500, 250];
@@ -1071,9 +1118,11 @@ function seriesPayout(year) {
   for (const [key, sr] of Object.entries(s.series)) {
     if (sr.year !== year || sr.paid) continue;
     sr.paid = true;
-    const topA = Object.entries(sr.animals).sort((x, y) => y[1].pts - x[1].pts).slice(0, 3);
+    const top = sx => Object.entries(sr.animals).filter(([, r]) => (r.sex || 'W') === sx).sort((x, y) => y[1].pts - x[1].pts).slice(0, 3);
+    const topW = top('W'), topE = top('E'), topR = top('R');
+    const topA = [...topW, ...topE, ...topR];
     const topF = Object.entries(sr.farms).sort((x, y) => y[1] - x[1]).slice(0, 3);
-    sr.final = { animals: topA.map(([id, r]) => ({ id, ...r })), farms: topF.map(([fid, pts]) => ({ fid, name: flockName(fid), pts })) };
+    sr.final = { wether: topW.map(([id, r]) => ({ id, ...r })), ewe: topE.map(([id, r]) => ({ id, ...r })), ram: topR.map(([id, r]) => ({ id, ...r })), farms: topF.map(([fid, pts]) => ({ fid, name: flockName(fid), pts })) };
     const give = (owner, place, label) => {
       const f = flock(owner); if (f) f.rep = (f.rep || 0) + [6, 4, 2][place];
       if (owner === 'P') {
@@ -1082,9 +1131,11 @@ function seriesPayout(year) {
         toast(`🏆 ${sr.name}: ${ordinal(place + 1)} ${label} — +${money(SERIES_PRIZES[place])}`, 'ach');
       }
     };
-    topA.forEach(([, r], i) => give(r.owner, i, `high-point animal (${r.name})`));
+    topW.forEach(([, r], i) => give(r.owner, i, `high-point wether (${r.name})`));
+    topE.forEach(([, r], i) => give(r.owner, i, `high-point ewe (${r.name})`));
+    topR.forEach(([, r], i) => give(r.owner, i, `high-point ram (${r.name})`));
     topF.forEach(([fid], i) => give(fid, i, 'high-point flock'));
-    if (topF[0]) news(`${sr.name} ${year} final standings: high-point flock ${flockName(topF[0][0])}${topA[0] ? `, high-point animal ${topA[0][1].name} (${topA[0][1].flock})` : ''}.`, 'show', topF.some(([f]) => f === 'P') || topA.some(([, r]) => r.owner === 'P'));
+    if (topF[0]) news(`${sr.name} ${year} final standings: high-point flock ${flockName(topF[0][0])}${topW[0] ? `, wether ${topW[0][1].name}` : ''}${topE[0] ? `, ewe ${topE[0][1].name}` : ''}${topR[0] ? `, ram ${topR[0][1].name}` : ''}.`, 'show', topF.some(([f]) => f === 'P') || topA.some(([, r]) => r.owner === 'P'));
   }
 }
 
@@ -1145,22 +1196,22 @@ function makeFlock(i, opts = {}) {
   };
 }
 function stockFlock(f, withLambs) {
+  const madeE = [], madeR = [];
   const club = f.type === 'club';
   const ewes = f.size;
   for (let i = 0; i < ewes; i++) {
     const breed = club ? (f.wt ? (Math.random() < 0.85 ? f.wt : 'Crossbred') : (Math.random() < 0.85 ? 'Crossbred' : pick(['Suffolk', 'Hampshire', 'Southdown', 'Shropshire', pick(WT_BREEDS)]))) : f.breed;
     const comp = pick(['Hampshire × Suffolk', 'Suffolk × Hampshire', 'Hampshire × Southdown', 'Suffolk × Shropshire', 'Southdown × Hampshire']);
-    addAnimal(makeFounder({ breed, sex: 'E', ageDays: irnd(400, 2300), owner: f.id, q: f.q, comp, face: 'black', keep: true }));
+    madeE.push(addAnimal(makeFounder({ breed, sex: 'E', ageDays: irnd(400, 2300), owner: f.id, q: f.q, comp, face: 'black', keep: true })));
   }
   const rams = f.size > 9 ? 2 : 1;
   for (let i = 0; i < rams; i++) {
     const breed = club ? (f.wt && Math.random() < 0.8 ? f.wt : pick(['Hampshire', 'Suffolk', 'Southdown', 'Crossbred', 'Wether-Type Hampshire', 'Wether-Type Suffolk', 'Shropshire', 'Dorset'])) : f.breed;
-    addAnimal(makeFounder({ breed, sex: 'R', ageDays: irnd(400, 1500), owner: f.id, q: f.q + 1.5, comp: 'Hampshire × Suffolk', face: 'black', keep: true }));
+    madeR.push(addAnimal(makeFounder({ breed, sex: 'R', ageDays: irnd(400, 1500), owner: f.id, q: f.q + 1.5, comp: 'Hampshire × Suffolk', face: 'black', keep: true })));
   }
   if (withLambs) {
     const n = Math.round(ewes * rnd(1.1, 1.6));
-    const dams = living().filter(a => a.owner === f.id && a.sex === 'E');
-    const sire = living().find(a => a.owner === f.id && a.sex === 'R');
+    const dams = madeE; const sire = madeR[0];
     for (let i = 0; i < n; i++) {
       const d = pick(dams); const age = { early: irnd(250, 290), winter: irnd(190, 230), late: irnd(150, 185), fall: irnd(330, 380) }[f.season || 'winter'];
       const a = offspring(d, snapshot(sire), f.id);
@@ -1220,11 +1271,11 @@ export function createWorld({ flockName: fname, home, county }) {
   const initials = fname.split(/\s+/).filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 3) || 'ME';
   s.flocks.push({ id: 'P', name: fname, state: home, type: 'player', skill: 1, rep: 0, banners: 0, prefix: initials, seq: 0, founded: 0 });
   // make sure the home state has competition
-  const homeCount = 8 + irnd(0, 4);
-  for (let i = 0; i < 150; i++) s.flocks.push(makeFlock(i + 1, i < homeCount ? { state: home } : {}));
+  const homeCount = 18 + irnd(0, 8);
+  for (let i = 0; i < START_FLOCKS; i++) s.flocks.push(makeFlock(i + 1, i < homeCount ? { state: home } : {}));
   // a handful of national-caliber outfits
-  s.flocks.slice(1, 1 + 10).forEach(f => { f.skill = rnd(0.85, 1); f.q = 9 + rnd(0, 4); f.rep = irnd(60, 140); });
-  s.nextFlock = 151;
+  s.flocks.slice(1, 1 + 22).forEach(f => { f.skill = rnd(0.85, 1); f.q = 9 + rnd(0, 4); f.rep = irnd(60, 140); });
+  s.nextFlock = START_FLOCKS + 1;
   return s;
 }
 export function finishSetup(ewes, ram, wethers = []) {
@@ -1259,7 +1310,7 @@ export function simDay() {
     // growth
     if (age < 0) continue;
     if (age < 60) {
-      const lf = a.litter === 3 ? 0.75 : a.litter === 2 ? 0.86 : 1;
+      const lf = a.litter >= 4 ? 0.66 : a.litter === 3 ? 0.75 : a.litter === 2 ? 0.86 : 1;
       a.lastAdg = (0.5 + 0.025 * a.bv.WW + 0.03 * (a.damMilk || 0)) * lf * (a.spider === 2 ? 0.5 : 1);
       a.wt += a.lastAdg; a.cond += (2.6 - a.cond) * 0.05;
     } else if (age < 450 && a.sex !== 'R' || age < 300) {
@@ -1333,7 +1384,7 @@ function lamb(ewe) {
   const F = inbreeding(sire, dam);
   const born = []; let still = 0;
   for (let i = 0; i < p.count; i++) {
-    if (Math.random() < 0.035 + F * 1.3 + (p.count === 3 ? 0.07 : 0)) { still++; continue; }
+    if (Math.random() < 0.035 + F * 1.3 + (p.count >= 4 ? 0.12 : p.count === 3 ? 0.07 : 0)) { still++; continue; }
     const a = offspring(dam, sire, ewe.owner, p.donor ? ewe : null);
     a.litter = p.count; addAnimal(a); born.push(a);
     if (ewe.owner === 'P') a.pen = penRoom(penOf(ewe)) > 0 ? penOf(ewe) : 'main';
@@ -1358,9 +1409,10 @@ function aiCalendar(d, m, dm) {
   const s = S();
   // Aug 1: culling, retention, flock size drift
   if (m === 7 && dm === 1) {
+    const idx = byOwner();
     for (const f of s.flocks) {
       if (f.id === 'P') continue;
-      const mine = living().filter(a => a.owner === f.id);
+      const mine = idx.get(f.id) || [];
       let ewes = mine.filter(a => a.sex === 'E' && a.keep);
       ewes.filter(a => ageDays(a) > 2400 || Math.random() < 0.08).forEach(a => { removeAnimal(a.id); });
       ewes = ewes.filter(a => s.animals[a.id]);
@@ -1371,7 +1423,7 @@ function aiCalendar(d, m, dm) {
       // rams: keep the best two, buy outside if none
       const rams = mine.filter(a => a.sex === 'R' && s.animals[a.id]).sort((x, y) => breedingIndex(y) - breedingIndex(x));
       rams.forEach((r, i) => { if (i >= 3 || ageDays(r) > 2000) removeAnimal(r.id); });
-      if (!living().some(a => a.owner === f.id && a.sex === 'R' && ageDays(a) > 200)) {
+      if (!mine.some(a => s.animals[a.id] && a.sex === 'R' && ageDays(a) > 200)) {
         const breed = f.type === 'club' ? pick(['Hampshire', 'Suffolk', 'Southdown', 'Crossbred']) : f.breed;
         addAnimal(makeFounder({ breed, sex: 'R', ageDays: irnd(300, 700), owner: f.id, q: f.q + 1, comp: 'Hampshire × Suffolk', face: 'black', keep: true }));
       }
@@ -1384,10 +1436,11 @@ function aiCalendar(d, m, dm) {
   const todayFor = {};
   for (const [k, [bm, bd]] of Object.entries(BD)) { const t0 = dayOf(y, bm, bd); todayFor[k] = d === t0 || d === t0 + 35 || dayOf(y - 1, bm, bd) + 35 === d; }
   if (Object.values(todayFor).some(Boolean)) {
+    const idx = byOwner();
     for (const f of s.flocks) {
       if (f.id === 'P') continue;
       if (!todayFor[f.season || (f.fall ? 'fall' : 'winter')]) continue;
-      const mine = living().filter(a => a.owner === f.id);
+      const mine = (idx.get(f.id) || []).filter(a => s.animals[a.id] && a.owner === f.id);
       const rams = mine.filter(a => a.sex === 'R' && ageDays(a) > 200 && ramHome(a)).sort((x, y) => breedingIndex(y) - breedingIndex(x));
       const ewes = mine.filter(a => a.sex === 'E' && a.keep && canBreed(a));
       if (!ewes.length) continue;
@@ -1435,7 +1488,7 @@ function aiCalendar(d, m, dm) {
 function growFlocks() {
   const s = S();
   const n = s.flocks.length - 1;
-  if (n >= 450) return;
+  if (n >= 700) return;
   const add = irnd(1, 3);
   for (let i = 0; i < add; i++) {
     const f = makeFlock(s.nextFlock++, { skill: Math.pow(Math.random(), 1.8) * 0.7, size: irnd(3, 6) });
