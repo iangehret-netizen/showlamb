@@ -219,3 +219,12 @@ details.more > .sumrow b { font-family: var(--serif); font-size: 16px; }
 
 body.nosel, body.nosel * { user-select: none !important; -webkit-user-select: none !important; }
 .penhead { user-select: none; -webkit-user-select: none; }
+
+.penhd { display: flex; align-items: center; gap: 8px; padding: 10px 0 4px; border-bottom: 2px solid var(--line); }
+.penhd b { font-family: var(--serif); font-size: 15px; }
+.penhd .sub { flex: 1; }
+
+.thumb { flex: none; width: 40px; height: 37px; display: grid; place-items: center; background: #ecebe6; border-radius: 8px; }
+.card > .thumb { align-self: center; }
+.check .thumb { margin-right: 2px; }
+.arow, .card, .check { user-select: none; -webkit-user-select: none; }

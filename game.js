@@ -118,10 +118,6 @@ export function marketIndex(a) { let v = 0; for (const t of TRAITS) v += MKT_W[t
 export function breedingIndex(a) {
   let v = 0; const w = { structure: .22, balance: .2, bone: .14, look: .16, muscle: .16, dimension: .12 };
   for (const t of TRAITS) v += w[t] * phen(a, t);
-  if (BREEDS[a.breed]?.reg !== false) {
-    const g = k => epdShown(a, k);
-    v += (g('WW') / 2 + g('PWG') / 3 + g('LMD') * 2.5 + g('NLB') / 4 + g('MILK') / 1.5 - g('BW') * 1.5 - g('FAT') * 3) * 0.9;
-  }
   return v;
 }
 
