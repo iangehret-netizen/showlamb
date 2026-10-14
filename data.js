@@ -40,7 +40,7 @@ export const BREEDS = {
   'Romney': B('Romney', 'white', '#eee8d8', '#f8f5ee', '#f8f5ee', [-4, -3, 1, 2, 0, 0], 135),
   'Shropshire': B('Shropshire', 'black', '#efe8d9', '#3a2c25', '#3a2c25', [4, 4, 3, 2, 1, 3], 130, { spider: 0.01 }),
   'Southdown': B('Southdown', 'brown', '#efe6d6', '#9c7656', '#a8835f', [5, 6, 4, 3, -2, 5], 115),
-  'Wether-Type Southdown': B('Wether-Type Southdown', 'brown', '#efe6d6', '#9c7656', '#a8835f', [7, 7, 3, 2, -1, 4], 118),
+  'Wether-Type Southdown': B('Wether-Type Southdown', 'brown', '#efe6d6', '#9c7656', '#a8835f', [7, 7, 3, 2, -1, 4], 118, { reg: false, wt: true }),
   'Suffolk': B('Suffolk', 'black', '#f4efe6', '#111111', '#111111', [6, 6, 2, 2, 6, 3], 150, { spider: 0.03 }),
   'Texel': B('Texel', 'white', '#f6f2e8', '#fbfaf6', '#fbfaf6', [9, 7, 0, 0, 2, 0], 130),
   'Tunis': B('Tunis', 'brown', '#efe4cf', '#a35a32', '#a35a32', [0, 1, 1, 1, 0, 1], 130),

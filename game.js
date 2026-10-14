@@ -150,13 +150,16 @@ export function clubType(a) {
 // Breed check at weigh-in: club lambs class by characteristics, not papers
 export function marketClassFor(a) {
   if (isNatural(a)) return 'Natural';
-  const pure = BREEDS[a.breed]?.reg !== false && a.breed !== 'Commercial';
+  const wtPure = a.breed.startsWith('Wether-Type ');
+  const pure = !wtPure && BREEDS[a.breed]?.reg !== false && a.breed !== 'Commercial';
   if (pure) { const b = a.breed === 'White Dorper' ? 'Dorper' : a.breed; return MARKET_CLASSES.includes(b) ? b : 'AOB'; }
   let best = null, bestV = 0;
   for (const [cls, faces] of Object.entries(BREED_CHECK)) {
     if (!faces.includes(a.face)) continue;
-    const share = a.blood?.[cls] || 0;
-    const chance = clamp((share - 0.45) / 0.4, 0, 1);
+    // wether-type lines count toward their parent breed (Wether-Type Southdown → Southdown)
+    let share = 0; for (const [b, v] of Object.entries(a.blood || (wtPure ? { [a.breed]: 1 } : {}))) if (baseBreed(b) === cls || (cls === 'Dorper' && baseBreed(b) === 'White Dorper')) share += v;
+    if (wtPure && !a.blood && baseBreed(a.breed) === cls) share = 1;
+    const chance = clamp((share - 0.45) / 0.4, 0, 1) * (share > 0.95 && wtPure ? 0.85 : 1); // a few wether-type lambs miss on breed character
     if ((a.chk ?? 0.5) < chance && share > bestV) { best = cls; bestV = share; }
   }
   if (best) return best;
@@ -456,6 +459,7 @@ export function repairSave() {
     return ok;
   });
   s.ledger = (s.ledger || []).filter(l => Number.isFinite(l.n));
+  for (const a of Object.values(s.animals)) if (a.reg && BREEDS[a.breed]?.reg === false) a.reg = false; // wether-type lines aren't registered
   mergeEmbryos();
 }
 export function mergeEmbryos() { const s = S(); const old = s.embryos || []; s.embryos = []; old.forEach(storeEmbryos); }
@@ -1106,7 +1110,7 @@ function showScore(a, judge, kind, show) {
     const ratio = a.wt / frameOf(a); const flex = a.dwarf === 1 ? 0.07 : 0;
     if (ratio < 0.86 - flex) v -= (0.86 - flex - ratio) * 70;
     if (ratio > 1.06 + flex) v -= (ratio - 1.06 - flex) * 55;
-    if (a.sex === 'W') v += 2.7 * (q.wether ?? 1);
+    if (a.sex === 'W') v += 2.3 * (q.wether ?? 1);
     if (q.big) v += q.big * clamp((ratio - 0.97) * 14, -2, 2);
     if (q.fresh) v += q.fresh * 0.08 * (phen(a, 'fresh') - 55);
     if (BREEDS[a.breed]?.reg !== false && !a.breed.startsWith('Wether-Type') && a.breed !== 'Commercial') v -= 3; // registered breeding-type sheep rarely beat club lambs

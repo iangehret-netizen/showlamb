@@ -747,13 +747,15 @@ function sheetEnter(key) {
   const br = sh.breeding ? mine.filter(a => !g.breedingEligible(a, sh) && !a.listing) : [];
   const cm = sh.commercial ? mine.filter(a => !g.commercialEligible(a, sh) && !a.listing) : [];
   const n = sel.market.size + sel.breeding.size + sel.commercial.size;
+  const socEwes = g.SOC[sh.tier] ? [...sel.market].map(id => s.animals[id]).filter(a => a && a.sex === 'E') : [];
+  const socWarn = socEwes.length ? `<div class="note warnbox"><b>⚠️ Terminal show — Sale of Champions.</b> ${socEwes.length} ewe lamb${socEwes.length > 1 ? 's' : ''} entered in the market show (${socEwes.map(a => esc(a.name)).join(', ')}). If she wins Grand, Reserve or a breed/division champion she <b>must sell</b> in the Sale of Champions and can’t come home as a replacement ewe.${sh.commercial ? ' Enter her in Commercial ewes instead to keep her.' : ''}</div>` : '';
   return `<div class="sheet-head"><h2>${esc(sh.short)} entries</h2><button class="x" data-act="close">×</button></div>
   <p class="sub">${esc(sh.name)} · ${g.fmtDate(sh.day)} (${daysTo(sh.day)}) · ${money(sh.fee)}/head · weigh-in limits ${sh.minWt}–${sh.maxWt} lb. Lambs outside the limits are sent home.</p>
   <p class="sub">Hauling from ${esc(STATES[s.home])} to ${esc(STATES[g.showState(sh)] || '')}: about ${money(g.haulCost(sh, Math.max(1, n)))} round trip, charged on show day. Entered animals are slick shorn automatically the day before the show ($${g.SHEAR_COST}/head).${sh.breeding ? ' Registered classes are lambs only (under 12 months); a banner winner there can’t win on the club side the same day.' : ''}</p>
   <h3>Market lambs ${mk.length ? `<button class="lnk" data-act="selall" data-div="market" data-key="${key}">Select all that make weight</button>` : ''}</h3>${mk.length ? mk.map(a => row(a, 'market')).join('') : '<div class="empty">No eligible market lambs (3–14 months old on show day, wethers or ewe lambs).</div>'}
   ${sh.breeding ? `<h3>Registered breeding sheep ${br.length ? `<button class="lnk" data-act="selall" data-div="breeding" data-key="${key}">Select all</button>` : ''}</h3>${br.length ? br.map(a => row(a, 'breeding')).join('') : '<div class="empty">No eligible registered lambs or yearlings.</div>'}` : ''}
   ${sh.commercial ? `<h3>Commercial ewes ${cm.length ? `<button class="lnk" data-act="selall" data-div="commercial" data-key="${key}">Select all</button>` : ''}</h3><p class="sub" style="margin:0 2px 6px">Any ewe lamb or yearling ewe, registered or not.</p>${cm.length ? cm.map(a => row(a, 'commercial')).join('') : '<div class="empty">No ewe lambs or yearling ewes.</div>'}` : ''}
-  <div class="btns"><button class="btn" data-act="doenter" data-key="${key}" ${n ? '' : 'disabled'}>Enter ${n} · ${money(n * sh.fee)}</button></div>`;
+  ${socWarn}<div class="btns"><button class="btn ${socEwes.length && UI.socOk ? 'danger' : ''}" data-act="doenter" data-key="${key}" ${n ? '' : 'disabled'}>${socEwes.length && UI.socOk ? `Confirm — enter ${n} incl. ewe lamb${socEwes.length > 1 ? 's' : ''}` : `Enter ${n} · ${money(n * sh.fee)}`}</button></div>`;
 }
 
 function sheetResult(i) {
@@ -976,9 +978,12 @@ const A = {
     });
     renderSheet();
   },
-  entersheet: el => { UI.enter = null; openSheet(() => sheetEnter(el.dataset.key)); },
+  entersheet: el => { UI.socOk = false; UI.enter = null; openSheet(() => sheetEnter(el.dataset.key)); },
   doenter: el => {
     const key = el.dataset.key; const sh = g.findShow(key); const sel = UI.enter;
+    const ewes = g.SOC[sh.tier] && [...sel.market].some(id => S().animals[id]?.sex === 'E');
+    if (ewes && !UI.socOk) { UI.socOk = true; renderSheet(); return; }
+    UI.socOk = false;
     let err = null;
     if (sel.market.size) err = g.enterShow(sh, [...sel.market], 'market');
     if (!err && sel.breeding.size) err = g.enterShow(sh, [...sel.breeding], 'breeding');
@@ -1063,7 +1068,7 @@ const ON = {
     g.setCare(el.dataset.id, { [k]: v }); save();
     if (k === 'lbs') { const b = document.querySelector(`[data-lbs="${el.dataset.id}"]`); if (b) b.textContent = (+v).toFixed(2); }
   },
-  entsel: el => { const set = UI.enter[el.dataset.div]; el.checked ? set.add(el.dataset.id) : set.delete(el.dataset.id); renderSheet(); },
+  entsel: el => { UI.socOk = false; const set = UI.enter[el.dataset.div]; el.checked ? set.add(el.dataset.id) : set.delete(el.dataset.id); renderSheet(); },
   setspeed: el => { S().settings.speed = +el.value; save(); renderHeader(); },
   setting: el => { S().settings[el.dataset.k] = el.checked; save(); },
   restore: el => {
