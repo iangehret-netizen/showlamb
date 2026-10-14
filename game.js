@@ -181,10 +181,10 @@ export function crossPlan(dam, sire) {
   for (const t of TRAITS) { const mid = (phen(dam, t) + phen(sire, t)) / 2 + (!same && t !== 'breed' ? 1.5 : 0) - (!same && t === 'breed' ? 8 : 0); traits[t] = [Math.round(clamp(mid - 9, 1, 99)), Math.round(clamp(mid + 9, 1, 99))]; }
   return { faces, natural, traits, cross: !same || dam.breed === 'Crossbred' };
 }
-export function marketIndex(a) { let v = 0; for (const t of TRAITS) v += MKT_W[t] * phen(a, t); return v; }
+export function marketIndex(a) { let v = 0; for (const t of TRAITS) v += (MKT_W[t] || 0) * phen(a, t); return v; }
 export function breedingIndex(a) {
-  let v = 0; const w = { structure: .22, balance: .2, bone: .14, look: .16, muscle: .16, dimension: .12 };
-  for (const t of TRAITS) v += w[t] * phen(a, t);
+  let v = 0; const w = { structure: .2, balance: .18, bone: .12, look: .14, muscle: .14, dimension: .1, breed: .08, fresh: .04 };
+  for (const t of TRAITS) v += (w[t] || 0) * phen(a, t);
   return v;
 }
 
@@ -445,6 +445,18 @@ const embKey = e => `${e.dam?.id || e.dam?.name}|${e.sire?.id || e.sire?.name}`;
 export function storeEmbryos(e) {
   const s = S(); const k = embKey(e); const grp = s.embryos.find(x => embKey(x) === k);
   if (grp) { grp.count += e.count; grp.day = Math.max(grp.day || 0, e.day || 0); } else s.embryos.push({ ...e });
+}
+// repair saves hit by the old $NaN pricing bug
+export function repairSave() {
+  const s = S(); if (!Number.isFinite(s.cash)) s.cash = 5000;
+  s.listings = (s.listings || []).filter(L => {
+    const ok = Number.isFinite(L.price) && (L.mode !== 'auction' || ((L.bidders || []).every(b => Number.isFinite(b.max)) && Number.isFinite(L.reserve)));
+    if (!ok && L.kind === 'animal' && s.animals[L.aid]) delete s.animals[L.aid].listing;
+    if (!ok && L.kind === 'embryo' && L.seller === 'P') storeEmbryos(L.emb);
+    return ok;
+  });
+  s.ledger = (s.ledger || []).filter(l => Number.isFinite(l.n));
+  mergeEmbryos();
 }
 export function mergeEmbryos() { const s = S(); const old = s.embryos || []; s.embryos = []; old.forEach(storeEmbryos); }
 export function register(id) {
@@ -1089,7 +1101,7 @@ function showScore(a, judge, kind, show) {
   a.fit = pres.fit; a.tone = pres.tone;
   let v = 0;
   if (kind === 'market') {
-    for (const t of TRAITS) v += w[t] * phen(a, t);
+    for (const t of TRAITS) v += (w[t] || 0) * phen(a, t);
     v -= 5 * Math.pow(Math.abs((a.cond ?? 3) - 3), 1.4);
     const ratio = a.wt / frameOf(a); const flex = a.dwarf === 1 ? 0.07 : 0;
     if (ratio < 0.86 - flex) v -= (0.86 - flex - ratio) * 70;

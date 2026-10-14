@@ -1130,7 +1130,7 @@ window.addEventListener('pagehide', () => save(true));
 
 // ---------- boot ----------
 (async () => {
-  try { const s = await dbGet('game'); if (s && s.started) { s.toasts = []; if (!Number.isFinite(s.cash)) s.cash = 5000; g.G.s = s; try { g.mergeEmbryos(); } catch (e) { } } } catch (e) { console.warn(e); }
+  try { const s = await dbGet('game'); if (s && s.started) { s.toasts = []; if (!Number.isFinite(s.cash)) s.cash = 5000; g.G.s = s; try { g.repairSave(); } catch (e) { console.warn(e); } } } catch (e) { console.warn(e); }
   render();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => { });
 })();
