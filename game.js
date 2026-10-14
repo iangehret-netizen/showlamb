@@ -1073,7 +1073,7 @@ function aiPresentation(f) { const k = f?.skill ?? 0.5; return { train: 45 + k *
 function fleecePenalty(a, show) {
   if (a.owner !== 'P') return 0;
   const d = fleeceDays(a, show.day);
-  return d < 4 ? 1.5 : d > 21 ? Math.min(6, (d - 21) * 0.12) : 0;
+  return d > 21 ? Math.min(6, (d - 21) * 0.12) : 0;
 }
 function showScore(a, judge, kind, show) {
   const J = JUDGE_STYLES[judge.style]; const w = J.w; const q = J.q || {};
@@ -1598,6 +1598,14 @@ export function simDay() {
   for (const a of all) if (a.sex === 'R') {
     if (a.leasedTo === 'P' && a.leaseUntil <= d) { delete a.leasedTo; delete a.leaseUntil; news(`${a.name}'s lease is up — he went home to ${flockName(a.owner)}.`, 'info', true); }
     if (a.away && a.away === d && a.owner === 'P') news(`${a.name} is back home from his lease.`, 'good', true);
+  }
+  // auto slick-shear everything entered in tomorrow's shows
+  { const keys = [...jackpotsOn(d + 1).map(x => x.key)];
+    for (const sh of allShows()) { const y = yearOf(d + 1); if (dayOf(y, sh.m, sh.d) === d + 1) keys.push(`${sh.id}-${y}`); }
+    const ids = new Set();
+    for (const k of keys) { const e = s.entries[k]; if (e) for (const div of ['market', 'breeding', 'commercial']) (e[div] || []).forEach(id => ids.add(id)); }
+    const list = [...ids].map(id => s.animals[id]).filter(a => a && a.owner === 'P' && a.death == null);
+    if (list.length) { addCash(-list.length * SHEAR_COST, `Show-eve slick shearing — ${list.length} head`); list.forEach(a => a.shorn = d); }
   }
   // shows today
   for (const sh of jackpotsOn(d)) runShow(sh);

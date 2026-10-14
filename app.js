@@ -135,8 +135,7 @@ function todayCard() {
   if (bids.length) items.push(`🔨 <b>${bids.length}</b> of your bids close within 3 days`);
   const mylots = s.listings.filter(L => L.seller === 'P').length;
   if (mylots) items.push(`🏷️ <b>${mylots}</b> of your lots on the market`);
-  const shaggy = mine.filter(a => a.string && g.fleeceDays(a) > 30).length;
-  if (shaggy) items.push(`✂️ <b>${shaggy}</b> show-string lamb${shaggy > 1 ? 's' : ''} need slick shearing before the next show`);
+
   if (s.loan) items.push(`🏦 Loan balance ${money(s.loan.balance)} · ${money(s.loan.payment)}/month`);
   if (!items.length) return '';
   return `<div class="today"><div class="th">Today on the farm</div>${items.map(x => `<div class="ti">${x}</div>`).join('')}</div>`;
@@ -152,14 +151,15 @@ function viewBarn() {
   const list = mine.filter(F[UI.filter] || F.all);
   const chip = (k, l) => `<button class="chip ${UI.filter === k ? 'on' : ''}" data-act="filter" data-v="${k}">${l}</button>`;
   const def = (a, b) => (a.sex === b.sex ? 0 : a.sex === 'R' ? -1 : b.sex === 'R' ? 1 : 0) || (age(b) >= 365) - (age(a) >= 365) || a.birth - b.birth;
-  const sortA = SORTS[UI.psort || 'sex']?.[1] || def;
+  const penSort = s.penSort || {};
   const pensHtml = g.pens().map(p => {
-    const inPen = list.filter(a => g.penOf(a) === p.id).sort(sortA);
+    const sk = penSort[p.id] || 'sex'; const inPen = list.filter(a => g.penOf(a) === p.id).sort(SORTS[sk]?.[1] || def);
     const total = g.penCount(p.id);
     if (!inPen.length && UI.filter !== 'all') return '';
     if (p.creep && !total && UI.filter === 'all') return '';
     const open = UI.openPens?.has(p.id) || (UI.filter !== 'all' && inPen.length);
     return `<div class="pen" data-pen="${p.id}"><div class="penhead"><span class="grip" data-grip="${p.id}" aria-label="Drag to reorder">⠿</span><button class="penbtn" data-act="pentoggle" data-id="${p.id}"><b>${esc(p.name)}</b><span class="sub">${UI.filter !== 'all' ? `${inPen.length} shown · ` : ''}${total}${p.cap ? ` / ${p.cap}` : ''} head</span><span class="chev">${open ? '▾' : '▸'}</span></button>${total ? `<button class="lnk" data-act="penmanage" data-id="${p.id}">Manage</button>` : ''}${!p.creep ? `<button class="lnk" data-act="penrename" data-id="${p.id}">Rename</button>` : ''}</div>
+      ${open && inPen.length > 1 ? `<div class="row pensort"><span class="sub">Sort</span><select data-on="psort" data-id="${p.id}">${Object.entries(SORTS).map(([k, [l]]) => `<option value="${k}" ${sk === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
       ${open && p.creep ? `<label class="check" style="padding:6px 12px"><input type="checkbox" data-on="creepfeed" ${s.creepFeed !== false ? 'checked' : ''}><div class="sub">Creep feed (8¢/lamb/day) — faster early gain. Lambs wean to the Main pen at 60 days.</div></label>` : ''}
       ${open ? (inPen.length ? inPen.map(animalRow).join('') : '<div class="sub" style="padding:8px 12px">Empty — move animals here from their card.</div>') : ''}</div>`;
   }).join('');
@@ -168,7 +168,6 @@ function viewBarn() {
   <div class="stats"><div class="stat"><b>${mine.length}</b><span>Head</span></div><div class="stat"><b>${mine.filter(F.ewes).length}</b><span>Ewes</span></div><div class="stat"><b>${mine.filter(F.lambs).length}</b><span>Lambs</span></div><div class="stat"><b>${mine.filter(F.string).length}</b><span>Showing</span></div></div>
   <div class="btns" style="margin:0 0 10px"><button class="btn sm" data-act="buildpen">Build a pen ${money(g.PEN_COST)}</button><button class="btn sm sec" data-act="gsalesheet">Group sale</button>${mine.some(a => age(a) < 365) ? '<button class="btn sm sec" data-act="tagsheet">Ear tag lambs</button>' : ''}</div>
   <div class="chips">${chip('all', 'All')}${chip('ewes', 'Ewes')}${chip('rams', 'Rams')}${chip('lambs', 'Lambs')}${chip('string', 'Show string')}${chip('open', 'Open ewes')}${chip('bred', 'Bred')}${chip('sale', 'For sale')}</div>
-  <div class="row" style="margin:0 2px 8px"><span class="sub">Sort</span><select data-on="psort" style="width:auto;padding:5px 8px">${Object.entries(SORTS).map(([k, [l]]) => `<option value="${k}" ${(UI.psort || 'sex') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
   <div id="pens">${list.length ? pensHtml : '<div class="empty">Nothing here.</div>'}</div>`;
 }
 const FACE_NAME = { black: 'Blackface', brown: 'Brown face', white: 'Whiteface', speckle: 'Speckleface', smut: 'Smutface' };
@@ -510,7 +509,7 @@ function animalBody(a, { mine = false } = {}) {
     <div><span>Registered</span>${a.reg ? 'Yes' : a.regOk && a.sex !== 'W' ? (mine ? `<button class="btn sm gold" data-act="register" data-id="${a.id}">Register $${g.REG_FEE}</button>` : 'Eligible') : 'No'}</div><div><span>Inbreeding</span>${((a.F || 0) * 100).toFixed(1)}%</div>
     ${a.comp && a.breed === 'Crossbred' ? `<div style="grid-column:1/-1"><span>Bred from</span>${esc(a.comp)}</div>` : ''}
     ${age < 450 && a.sex !== 'R' ? `<div style="grid-column:1/-1"><span>Market class (breed check)</span>${esc(g.marketClassFor(a))}</div>` : ''}
-    ${mine ? `<div><span>Fleece</span>${g.fleeceDays(a)} days${g.fleeceDays(a) > 21 ? ' <span class="warn">· shear</span>' : ''}</div>` : ''}${a.load > 0.5 ? `<div><span>Show fatigue</span>${a.load > 2.5 ? 'High' : 'Some'} — rest helps</div>` : ''}
+    ${mine ? `<div><span>Fleece</span>${g.fleeceDays(a)} days${g.fleeceDays(a) > 21 ? ' <span class="sub">· auto-shorn before shows</span>' : ''}</div>` : ''}${a.load > 0.5 ? `<div><span>Show fatigue</span>${a.load > 2.5 ? 'High' : 'Some'} — rest helps</div>` : ''}
     ${a.lateW ? '<div style="grid-column:1/-1"><span>Wethered late</span>a bit coarser, ram-like look</div>' : ''}${a.blk === 2 && a.breed !== 'Natural Colored' ? '<div style="grid-column:1/-1"><span>Color</span>Natural (black) — shows in the Natural class</div>' : a.provenBlack ? '<div style="grid-column:1/-1"><span>Color</span>Proven black carrier (has thrown a natural)</div>' : ''}
     ${a.bottle ? '<div><span>Raised</span>on the bottle</div>' : a.grafted ? `<div><span>Raised</span>grafted lamb</div>` : ''}${a.sex === 'R' && age >= 200 ? `<div><span>Ewes covered</span>${g.ramUsed(a)} / ${g.ramCap(a)} this season</div>` : ''}</div>` : `<div class="kv"><div><span>Breed</span>${esc(g.breedLabel(a))}</div><div><span>Owner</span>${esc(a.ownerName || '')}</div></div>`;
   const ped = `<h3>Pedigree</h3>${pedigree(a)}${a.et ? `<p class="sub">Embryo transfer — carried by ${esc(a.recipName || '')}</p>` : ''}`;
@@ -744,7 +743,7 @@ function sheetEnter(key) {
   const n = sel.market.size + sel.breeding.size + sel.commercial.size;
   return `<div class="sheet-head"><h2>${esc(sh.short)} entries</h2><button class="x" data-act="close">×</button></div>
   <p class="sub">${esc(sh.name)} · ${g.fmtDate(sh.day)} (${daysTo(sh.day)}) · ${money(sh.fee)}/head · weigh-in limits ${sh.minWt}–${sh.maxWt} lb. Lambs outside the limits are sent home.</p>
-  <p class="sub">Hauling from ${esc(STATES[s.home])} to ${esc(STATES[g.showState(sh)] || '')}: about ${money(g.haulCost(sh, Math.max(1, n)))} round trip, charged on show day. Slick shear 4–21 days before showing.${sh.breeding ? ' Registered classes are lambs only (under 12 months); a banner winner there can’t win on the club side the same day.' : ''}</p>
+  <p class="sub">Hauling from ${esc(STATES[s.home])} to ${esc(STATES[g.showState(sh)] || '')}: about ${money(g.haulCost(sh, Math.max(1, n)))} round trip, charged on show day. Entered animals are slick shorn automatically the day before the show ($${g.SHEAR_COST}/head).${sh.breeding ? ' Registered classes are lambs only (under 12 months); a banner winner there can’t win on the club side the same day.' : ''}</p>
   <h3>Market lambs ${mk.length ? `<button class="lnk" data-act="selall" data-div="market" data-key="${key}">Select all that make weight</button>` : ''}</h3>${mk.length ? mk.map(a => row(a, 'market')).join('') : '<div class="empty">No eligible market lambs (3–14 months old on show day, wethers or ewe lambs).</div>'}
   ${sh.breeding ? `<h3>Registered breeding sheep ${br.length ? `<button class="lnk" data-act="selall" data-div="breeding" data-key="${key}">Select all</button>` : ''}</h3>${br.length ? br.map(a => row(a, 'breeding')).join('') : '<div class="empty">No eligible registered lambs or yearlings.</div>'}` : ''}
   ${sh.commercial ? `<h3>Commercial ewes ${cm.length ? `<button class="lnk" data-act="selall" data-div="commercial" data-key="${key}">Select all</button>` : ''}</h3><p class="sub" style="margin:0 2px 6px">Any ewe lamb or yearling ewe, registered or not.</p>${cm.length ? cm.map(a => row(a, 'commercial')).join('') : '<div class="empty">No ewe lambs or yearling ewes.</div>'}` : ''}
@@ -1069,7 +1068,7 @@ const ON = {
   sform: el => { const st = UI.setup; st.form[el.dataset.k] = el.value; if (el.dataset.k === 'sex') { const left = g.STARTER_LIMITS[el.value] - st.list.filter(a => a.sex === el.value).length; st.form.qty = Math.max(1, Math.min(st.form.qty, left)); } renderSetup(); },
   custpick: el => { keepSetupInputs(); const st = UI.setup; st.cust[el.dataset.k] = el.value; const y = window.scrollY; renderSetup(); window.scrollTo(0, y); },
   plan: el => { UI.plan[el.dataset.k] = el.value; renderSheet(); },
-  psort: el => { UI.psort = el.value; render(); },
+  psort: el => { const s = S(); s.penSort = s.penSort || {}; s.penSort[el.dataset.id] = el.value; save(); render(); },
   creepfeed: el => { S().creepFeed = el.checked; save(); },
   pmid: el => { el.checked ? UI.pm.ids.add(el.dataset.id) : UI.pm.ids.delete(el.dataset.id); renderSheet(); },
   pmmove: el => { if (!el.value) return; result(g.bulkAct([...UI.pm.ids], 'move', el.value), 'Moved.'); },
