@@ -415,7 +415,7 @@ export function flush(donorId, sire) { // sire: {ramId} or {tankIdx}
   const mon = monthOf(s.day); const season = (mon >= 7 && mon <= 11) ? 1 : 0.6;
   const n = Math.max(0, Math.round((rnd(1, 11) + d.bv.NLB / 6) * season * (ageDays(d) > 2200 ? 0.6 : 1)));
   d.flushed = s.day; d.flushes = (d.flushes || 0) + 1;
-  if (n > 0) s.embryos.push({ id: uid('e'), dam: snapshot(d), sire: snap, count: n, day: s.day });
+  if (n > 0) storeEmbryos({ id: uid('e'), dam: snapshot(d), sire: snap, count: n, day: s.day });
   news(`Flushed ${d.name} to ${snap.name}: ${n} transferable embryo${n === 1 ? '' : 's'}.`, n ? 'good' : 'bad', true);
   return null;
 }
@@ -440,6 +440,13 @@ export function setCare(id, care) { const a = S().animals[id]; a.care = { ...(a.
 export const defaultCare = () => ({ feed: 'developer', lbs: 3, ex: 1, rinse: true, halter: true });
 export function toggleString(id) { const a = S().animals[id]; a.string = !a.string; if (a.string && !a.care) a.care = defaultCare(); }
 export const REG_FEE = 10;
+// embryos from the same mating (dam × sire) are stored as one group with a count
+const embKey = e => `${e.dam?.id || e.dam?.name}|${e.sire?.id || e.sire?.name}`;
+export function storeEmbryos(e) {
+  const s = S(); const k = embKey(e); const grp = s.embryos.find(x => embKey(x) === k);
+  if (grp) { grp.count += e.count; grp.day = Math.max(grp.day || 0, e.day || 0); } else s.embryos.push({ ...e });
+}
+export function mergeEmbryos() { const s = S(); const old = s.embryos || []; s.embryos = []; old.forEach(storeEmbryos); }
 export function register(id) {
   const s = S(); const a = s.animals[id];
   if (a.reg) return 'Already registered.';
@@ -636,7 +643,7 @@ export function cancelListing(lid) {
   const s = S(); const L = s.listings.find(l => l.id === lid); if (!L) return;
   if (L.mode === 'auction' && L.playerMax && L.seller !== 'P') return;
   if (L.kind === 'animal') delete s.animals[L.aid].listing;
-  if (L.kind === 'embryo' && L.seller === 'P') s.embryos.push(L.emb);
+  if (L.kind === 'embryo' && L.seller === 'P') storeEmbryos(L.emb);
   s.listings = s.listings.filter(l => l !== L);
 }
 export function currentBid(L) {
@@ -681,7 +688,7 @@ function transfer(L, buyer, price) {
     label = `${a.name} (${breedLabel(a)} ${sexText(a).toLowerCase()})`;
     recordSale({ name: a.name, breed: breedLabel(a), type: sexText(a), price, seller: sellerName, buyer: buyerName, day: s.day, mine: L.seller === 'P' || buyer === 'P' });
   } else {
-    if (buyer === 'P') s.embryos.push(L.emb);
+    if (buyer === 'P') storeEmbryos(L.emb);
     label = `${L.emb.count} embryos (${L.emb.sire.name} × ${L.emb.dam.name})`;
     recordSale({ name: label, breed: L.emb.dam.breed, type: 'Embryos', price, seller: sellerName, buyer: buyerName, day: s.day, mine: L.seller === 'P' || buyer === 'P' });
   }
@@ -718,7 +725,7 @@ function processMarket() {
       else { // expired buy-now
         s.listings = s.listings.filter(x => x !== L);
         if (L.kind === 'animal') { delete s.animals[L.aid].listing; if (L.seller === 'P') news(`Your listing for ${s.animals[L.aid].name} expired unsold.`, 'bad', true); }
-        else if (L.seller === 'P') { s.embryos.push(L.emb); news('Your embryo listing expired unsold.', 'bad', true); }
+        else if (L.seller === 'P') { storeEmbryos(L.emb); news('Your embryo listing expired unsold.', 'bad', true); }
       }
     } else if (L.mode === 'buy' && L.seller !== 'P' && Math.random() < 0.06) {
       // other AI flocks buy AI lots too
@@ -735,7 +742,7 @@ function closeAuction(L) {
   if (!all.length || all[0].max < L.reserve) {
     s.listings = s.listings.filter(x => x !== L);
     if (L.kind === 'animal') delete s.animals[L.aid].listing;
-    if (L.seller === 'P') { if (L.kind === 'embryo') s.embryos.push(L.emb); news(`No sale: ${L.kind === 'animal' ? s.animals[L.aid].name : 'embryo lot'} didn’t reach the opening bid.`, 'bad', true); }
+    if (L.seller === 'P') { if (L.kind === 'embryo') storeEmbryos(L.emb); news(`No sale: ${L.kind === 'animal' ? s.animals[L.aid].name : 'embryo lot'} didn’t reach the opening bid.`, 'bad', true); }
     if (L.playerMax) news(`Your bid lost — lot passed unsold.`, 'bad', true);
     return;
   }

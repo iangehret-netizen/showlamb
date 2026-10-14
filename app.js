@@ -388,10 +388,15 @@ function viewMarket() {
   const seg = `<div class="seg">${[['browse', 'For sale'], ['sales', 'Sales calendar'], ['mine', 'My lots & bids']].map(([k, l]) => `<button class="${UI.mtab === k ? 'on' : ''}" data-act="mtab" data-v="${k}">${l}</button>`).join('')}</div>`;
   if (UI.mtab === 'sales') {
     const sales = (s.sales || []).filter(x => x.close >= s.day).sort((a, b) => (a.open > s.day) - (b.open > s.day) || a.close - b.close || a.open - b.open);
-    const live = sales.filter(x => x.open <= s.day), up = sales.filter(x => x.open > s.day);
-    const row = x => { const f = g.flock(x.f); const lots = s.listings.filter(L => L.sale === x.id).length; return `<button class="card" data-act="saleopen" data-id="${x.id}"><div class="grow"><div class="nm">${fbadge(x.f)}${favStar(x.f)}${esc(x.name)}</div><div class="ln">${esc(STATES[f?.state] || '')} · ${x.open <= s.day ? (lots ? `<b>Live</b> · ${lots} lots · closes ${g.fmtShort(x.close)}` : `Closed · ${x.lots} lots sold`) : `Opens ${g.fmtShort(x.open)} · ~${x.n} lots · closes ${g.fmtShort(x.close)}`}</div></div></button>`; };
-    return `<h2>Market</h2>${seg}<h3>Live now (${live.length})</h3>${live.length ? `<div class="cards">${live.map(row).join('')}</div>` : '<div class="empty">No farm sales running right now.</div>'}
-    <h3>Coming up (${up.length})</h3>${up.length ? `<div class="cards">${up.map(row).join('')}</div>` : '<div class="empty">Nothing announced yet.</div>'}
+    const left = x => s.listings.filter(L => L.sale === x.id).length;
+    const live = sales.filter(x => x.open <= s.day && left(x)), up = sales.filter(x => x.open > s.day), done = sales.filter(x => x.open <= s.day && !left(x));
+    const head = x => { const f = g.flock(x.f); return `<div class="nm">${fbadge(x.f)}${favStar(x.f)}${esc(x.name)}</div><div class="ln">${esc(STATES[f?.state] || '')} · `; };
+    const liveRow = x => `<button class="card" data-act="saleopen" data-id="${x.id}"><div class="grow">${head(x)}<b>Live</b> · ${left(x)} head · closes ${g.fmtShort(x.close)}</div></div><span class="chev">›</span></button>`;
+    const upRow = x => `<div class="card"><div class="grow">${head(x)}Opens ${g.fmtShort(x.open)} · about ${x.n} head · closes ${g.fmtShort(x.close)}</div></div></div>`;
+    const doneRow = x => `<div class="card" style="opacity:.65"><div class="grow">${head(x)}Closed · ${x.lots} head sold</div></div></div>`;
+    return `<h2>Market</h2>${seg}<h3>Live now (${live.length})</h3>${live.length ? `<div class="cards">${live.map(liveRow).join('')}</div>` : '<div class="empty">No farm sales running right now.</div>'}
+    <h3>Coming up (${up.length})</h3>${up.length ? `<div class="cards">${up.map(upRow).join('')}</div>` : '<div class="empty">Nothing announced yet.</div>'}
+    ${done.length ? `<h3>Just closed</h3><div class="cards">${done.map(doneRow).join('')}</div>` : ''}
     <p class="sub">Star a farm on its page to get a heads-up in News when its sale opens.</p>`;
   }
   if (UI.mtab === 'mine') {
@@ -406,8 +411,9 @@ function viewMarket() {
   const all = marketItems();
   const counts = {}; all.forEach(it => counts[it.cat] = (counts[it.cat] || 0) + 1);
   let items = UI.mfilter === 'all' ? all : UI.mfilter === 'fav' ? all.filter(it => (s.favs || []).includes(it.L?.seller || it.d?.owner)) : all.filter(it => it.cat === UI.mfilter);
-  const saleF = UI.msale ? (s.sales || []).find(x => x.id === UI.msale) : null;
+  let saleF = UI.msale ? (s.sales || []).find(x => x.id === UI.msale) : null;
   if (saleF) items = all.filter(it => it.L?.sale === saleF.id);
+  if (saleF && !items.length) { UI.msale = null; saleF = null; items = all; }
   const breeds = [...new Set(items.map(it => it.breed))].sort();
   if (UI.mbreed && !breeds.includes(UI.mbreed)) UI.mbreed = '';
   if (UI.mbreed) items = items.filter(it => it.breed === UI.mbreed);
@@ -1124,9 +1130,9 @@ window.addEventListener('pagehide', () => save(true));
 
 // ---------- boot ----------
 (async () => {
-  try { const s = await dbGet('game'); if (s && s.started) { s.toasts = []; if (!Number.isFinite(s.cash)) s.cash = 5000; g.G.s = s; } } catch (e) { console.warn(e); }
+  try { const s = await dbGet('game'); if (s && s.started) { s.toasts = []; if (!Number.isFinite(s.cash)) s.cash = 5000; g.G.s = s; try { g.mergeEmbryos(); } catch (e) { } } } catch (e) { console.warn(e); }
   render();
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { });
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => { });
 })();
 // drag pens to reorder (press the ⠿ handle and drag)
 let dragPen = null;
