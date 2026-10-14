@@ -1,7 +1,7 @@
 // ShowLamb — simulation engine
 import {
-  TRAITS, EPDS, BREEDS, REG_BREEDS, marketClassOf, FEED_BY_ID, STATES, STATE_WEIGHT,
-  NATIONAL_SHOWS, homeShows, TIER, WT_BREEDS, baseBreed, NEIGHBORS, RR_FREQ, DWARF_FREQ, JACKPOT_WORDS, JACKPOT_PLACES, PLACE_WORDS, JUDGE_STYLES, SURNAMES, FLOCK_SUFFIX, LAMB_NAMES, RAM_NAMES, EWE_NAMES, SHOW_NAMES, ACHIEVEMENTS,
+  TRAITS, EPDS, BREEDS, REG_BREEDS, FEED_BY_ID, STATES, STATE_WEIGHT,
+  NATIONAL_SHOWS, homeShows, TIER, MARKET_CLASSES, BREED_CHECK, STATE_LL, SHOW_STATE, WT_BREEDS, baseBreed, NEIGHBORS, RR_FREQ, DWARF_FREQ, JACKPOT_WORDS, JACKPOT_PLACES, PLACE_WORDS, JUDGE_STYLES, SURNAMES, FLOCK_SUFFIX, LAMB_NAMES, RAM_NAMES, EWE_NAMES, SHOW_NAMES, ACHIEVEMENTS,
 } from './data.js';
 
 export const G = { s: null, listeners: [] };
@@ -49,7 +49,7 @@ export function sexText(a) {
   if (a.sex === 'R') return d < 365 ? 'Ram lamb' : 'Ram';
   return d < 365 ? 'Ewe lamb' : (d < 730 ? 'Yearling ewe' : 'Ewe');
 }
-export const breedLabel = a => a.breed === 'Crossbred' ? (a.face === 'white' ? 'Whiteface cross' : 'Blackface cross') : (a.breed === 'Commercial' ? 'Commercial' : a.breed);
+export const breedLabel = a => a.breed === 'Crossbred' ? (a.blk === 2 ? 'Natural (club)' : `${clubType(a)} cross`) : a.breed === 'Commercial' ? 'Commercial' : (a.blk === 2 && a.breed !== 'Natural Colored' ? `${a.breed} (black)` : a.breed);
 let _lv = null, _lvS = null, _lvV = -1, _ver = 0;
 export const bumpAnimals = () => { _ver++; };
 export const living = () => { const s = S(); if (_lvS !== s || _lvV !== _ver) { _lv = Object.values(s.animals); _lvS = s; _lvV = _ver; } return _lv; };
@@ -63,19 +63,20 @@ export function news(text, kind = 'info', mine = false) {
   if (s.news.length > 250) s.news.length = 250;
 }
 export function toast(text, kind = 'info') { S().toasts.push({ text, kind }); }
-function addCash(n, why) { const s = S(); s.cash += n; s.ledger.unshift({ day: s.day, n: Math.round(n), why }); if (s.ledger.length > 200) s.ledger.length = 200; }
+function addCash(n, why) { const s = S(); if (!Number.isFinite(n)) return; s.cash += n; s.ledger.unshift({ day: s.day, n: Math.round(n), why }); if (s.ledger.length > 200) s.ledger.length = 200; }
 
 // ---------- breed bases ----------
 function breedBase(breed) {
   const b = BREEDS[breed]; const base = {};
-  TRAITS.forEach((t, i) => base[t] = 50 + b.t[i]);
+  TRAITS.forEach((t, i) => base[t] = 50 + (b.t[i] || 0));
+  base.breed = 50 + (b.reg !== false ? 8 : breed.startsWith('Wether-Type') ? 2 : -6);
   base.frame = b.frame; base.prol = b.prolific;
   return base;
 }
 function avgBase(b1, b2, het) {
   const o = {};
   for (const k of Object.keys(b1)) o[k] = (b1[k] + b2[k]) / 2;
-  if (het) { TRAITS.forEach(t => o[t] += 1.5); o.prol += 0.1; }
+  if (het) { TRAITS.forEach(t => o[t] += 1.5); o.prol += 0.1; o.breed -= 10; }
   return o;
 }
 export const isFaceDark = f => f === 'black' || f === 'brown';
@@ -98,8 +99,16 @@ export function epdShown(a, k) {
   const e = EPDS.find(x => x.k === k);
   return a.bv[k] + (a.err?.[k] || 0) * e.sd * 0.9 * (1 - accuracy(a));
 }
+export const FRESH_PEAK = [2.7, 3.3];
 export function phen(a, t) {
-  let v = a.base[t] + a.bv[t] + (a.pe?.[t] || 0);
+  let v = (a.base[t] ?? 50) + (a.bv[t] || 0) + (a.pe?.[t] || 0);
+  if (t === 'fresh') {
+    const c = a.cond ?? 3; const age = S() ? ageDays(a) : 200;
+    if (c > FRESH_PEAK[1]) v -= (c - FRESH_PEAK[1]) * 12; else if (c < FRESH_PEAK[0]) v -= (FRESH_PEAK[0] - c) * 7;
+    if (age > 300 && age < 800) v -= (age - 300) * 0.06;
+    v -= (a.load || 0) * 3;
+  }
+  if (a.lateW) { if (t === 'look') v -= 4; if (t === 'balance') v -= 2; if (t === 'fresh') v -= 2; }
   if (t === 'muscle') v += (a.bv.LMD || 0) * 4 + (a.tone || 0);
   if (t === 'look') v += ((a.fit ?? 55) - 55) * 0.1;
   if (t === 'dimension') v += ((a.cond ?? 3) - 3) * 2;
@@ -114,6 +123,64 @@ export function phen(a, t) {
 }
 export const traitScores = a => Object.fromEntries(TRAITS.map(t => [t, Math.round(phen(a, t))]));
 const MKT_W = JUDGE_STYLES[3].w;
+
+// ---------- color & type genetics ----------
+// Face locus alleles: B black, N brown, W white. Body: blk = copies of recessive black (2 = natural, all black).
+const BREED_FG = { black: 'BB', brown: 'NN', white: 'WW', colored: 'NN' };
+export const BLK_FREQ = { Crossbred: 0.2, Commercial: 0.05, 'Natural Colored': 1 };
+function blkFreq(breed) { if (breed in BLK_FREQ) return BLK_FREQ[breed]; if (breed.startsWith('Wether-Type')) return 0.1; return ['black', 'brown'].includes(BREEDS[breed]?.face) ? 0.03 : 0.01; }
+export function faceFromGenes(fg, r = Math.random()) {
+  const g = [...fg].sort().join('');
+  if (g === 'BB' || g === 'BN') return 'black';
+  if (g === 'NN') return 'brown';
+  if (g === 'BW') return r < 0.55 ? 'speckle' : 'smut';
+  if (g === 'NW') return 'smut';
+  return 'white';
+}
+export const isNatural = a => a && a.blk === 2;
+export function bloodOf(breed, comp) {
+  if (breed === 'Crossbred') { const [x, y] = (comp || 'Hampshire × Suffolk').split(' × ').map(b => b in BREEDS ? baseBreed(b) : 'Club'); const o = {}; o[x] = (o[x] || 0) + 0.5; o[y] = (o[y] || 0) + 0.5; return o; }
+  return { [baseBreed(breed)]: 1 };
+}
+const mixBlood = (a, b) => { const o = {}; for (const [k, v] of Object.entries(a || {})) o[k] = (o[k] || 0) + v / 2; for (const [k, v] of Object.entries(b || {})) o[k] = (o[k] || 0) + v / 2; return o; };
+export function clubType(a) {
+  if (isNatural(a)) return 'Natural';
+  return { black: 'Blackface', brown: 'Blackface', white: 'Whiteface', speckle: 'Speckleface', smut: 'Smutface' }[a.face] || 'Blackface';
+}
+// Breed check at weigh-in: club lambs class by characteristics, not papers
+export function marketClassFor(a) {
+  if (isNatural(a)) return 'Natural';
+  const pure = BREEDS[a.breed]?.reg !== false && a.breed !== 'Commercial';
+  if (pure) { const b = a.breed === 'White Dorper' ? 'Dorper' : a.breed; return MARKET_CLASSES.includes(b) ? b : 'AOB'; }
+  let best = null, bestV = 0;
+  for (const [cls, faces] of Object.entries(BREED_CHECK)) {
+    if (!faces.includes(a.face)) continue;
+    const share = a.blood?.[cls] || 0;
+    const chance = clamp((share - 0.45) / 0.4, 0, 1);
+    if ((a.chk ?? 0.5) < chance && share > bestV) { best = cls; bestV = share; }
+  }
+  if (best) return best;
+  return a.face === 'white' ? 'Whiteface Cross' : 'Blackface Cross';
+}
+// Cross planner: face/natural odds and expected trait ranges for a mating
+export function crossPlan(dam, sire) {
+  const faces = {};
+  const fd = dam.fg || BREED_FG[dam.face] || 'BB', fs = sire.fg || BREED_FG[sire.face] || 'BB';
+  for (const x of fd) for (const y of fs) {
+    const g = [x, y].sort().join('');
+    if (g === 'BW') { faces.speckle = (faces.speckle || 0) + 0.25 * 0.55; faces.smut = (faces.smut || 0) + 0.25 * 0.45; }
+    else { const f = faceFromGenes(g); faces[f] = (faces[f] || 0) + 0.25; }
+  }
+  const known = a => a.blk === 2 ? 2 : a.provenBlack ? 1 : null;
+  const kd = known(dam), ks = known(sire);
+  let natural = null;
+  if (kd != null && ks != null) natural = (kd === 2 ? 1 : 0.5) * (ks === 2 ? 1 : 0.5);
+  else if (kd === 0 || ks === 0) natural = 0;
+  const same = dam.breed === sire.breed;
+  const traits = {};
+  for (const t of TRAITS) { const mid = (phen(dam, t) + phen(sire, t)) / 2 + (!same && t !== 'breed' ? 1.5 : 0) - (!same && t === 'breed' ? 8 : 0); traits[t] = [Math.round(clamp(mid - 9, 1, 99)), Math.round(clamp(mid + 9, 1, 99))]; }
+  return { faces, natural, traits, cross: !same || dam.breed === 'Crossbred' };
+}
 export function marketIndex(a) { let v = 0; for (const t of TRAITS) v += MKT_W[t] * phen(a, t); return v; }
 export function breedingIndex(a) {
   let v = 0; const w = { structure: .22, balance: .2, bone: .14, look: .16, muscle: .16, dimension: .12 };
@@ -142,7 +209,7 @@ function fakePed(breed, depth) {
   return { s: node('R', depth), d: node('E', depth) };
 }
 export function snapshot(a) {
-  return { ped: a.ped, sireName: a.sireName, damName: a.damName, id: a.id, name: a.name, breed: a.breed, comp: a.comp, face: a.face, reg: a.reg, base: { ...a.base }, bv: { ...a.bv }, spider: a.spider, dwarf: a.dwarf || 0, scr: a.scr, anc: a.anc, owner: a.owner, ownerName: flockName(a.owner), sex: a.sex, prog: a.prog, err: { ...a.err }, tested: { ...a.tested } };
+  return { fg: a.fg, blk: a.blk, blood: a.blood, provenBlack: a.provenBlack, ped: a.ped, sireName: a.sireName, damName: a.damName, id: a.id, name: a.name, breed: a.breed, comp: a.comp, face: a.face, reg: a.reg, base: { ...a.base }, bv: { ...a.bv }, spider: a.spider, dwarf: a.dwarf || 0, scr: a.scr, anc: a.anc, owner: a.owner, ownerName: flockName(a.owner), sex: a.sex, prog: a.prog, err: { ...a.err }, tested: { ...a.tested } };
 }
 
 function newBV(q, F = 0) {
@@ -193,6 +260,11 @@ export function makeFounder({ breed, sex, ageDays: age, owner, q = 0, comp, face
     sireName: 'Unrecorded', damName: 'Unrecorded',
   };
   if (a.scr === 'QR') a.scr = 'RQ';
+  a.fg = breed === 'Crossbred' ? (a.face === 'white' ? 'WW' : Math.random() < 0.85 ? 'BB' : 'BW') : breed === 'Commercial' ? (Math.random() < 0.9 ? 'WW' : 'BW') : (BREED_FG[br.face] || 'WW');
+  if (breed === 'Crossbred' || breed === 'Commercial') a.face = faceFromGenes(a.fg);
+  const bf = blkFreq(breed); a.blk = bf >= 1 ? 2 : (Math.random() < bf ? 1 : 0) + (Math.random() < bf * 0.15 ? 1 : 0);
+  if (a.blk === 2 && BREEDS[breed]?.reg !== false && breed !== 'Natural Colored') a.blk = 1;
+  a.blood = bloodOf(breed, comp); a.chk = Math.random();
   if (owner !== 'LOCAL') { a.ped = fakePed(a.breed, 3); a.sireName = a.ped.s.n; a.damName = a.ped.d.n; }
   a.wt = weightForAge(age, frameOf(a), sex) * (1 + a.bv.PWG / 60);
   a.tag = owner === 'LOCAL' ? '' : nextTag(f); a.name = owner === 'LOCAL' ? animalName(f, sex) : a.tag; a.named = owner === 'LOCAL';
@@ -228,6 +300,9 @@ function offspring(dam, sire, owner, recipient) {
     bv[e.k] = v;
   });
   const al = (g) => g === 2 ? 1 : g === 1 ? (Math.random() < 0.5 ? 1 : 0) : 0;
+  const fgOf = x => x.fg || BREED_FG[x.face] || 'BB';
+  const fg = fgOf(dam)[Math.random() < 0.5 ? 0 : 1] + fgOf(sire)[Math.random() < 0.5 ? 0 : 1];
+  const blk = al(dam.blk || 0) + al(sire.blk || 0);
   const scrAl = g => g[Math.random() < 0.5 ? 0 : 1];
   let scr = scrAl(dam.scr) + scrAl(sire.scr); if (scr === 'QR') scr = 'RQ';
   const anc = [[sire.id, 1], [dam.id, 1]];
@@ -239,7 +314,13 @@ function offspring(dam, sire, owner, recipient) {
     spider: al(dam.spider) + al(sire.spider), dwarf: al(dam.dwarf || 0) + al(sire.dwarf || 0), scr, tested: {}, record: [], cond: 2.5, fit: 50, train: 20, tone: 0,
     sire: sire.id, dam: dam.id, sireName: sire.name, damName: dam.name, ped: { s: pedNode(sire, 2), d: pedNode(dam, 2) }, sireOwner: sire.ownerName || flockName(sire.owner),
     damMilk: (recipient || dam).bv.MILK, et: !!recipient, recipName: recipient?.name,
+    fg, blk, blood: mixBlood(dam.blood || bloodOf(dam.breed, dam.comp), sire.blood || bloodOf(sire.breed, sire.comp)), chk: Math.random(),
   };
+  if (breed === 'Crossbred' || breed === 'Commercial') a.face = faceFromGenes(fg);
+  if (blk === 2) {
+    if (breed !== 'Natural Colored') { a.reg = false; a.regOk = false; }
+    for (const p of [dam, sire]) { const live = s.animals[p.id]; if (live && live.blk !== 2) live.provenBlack = true; }
+  }
   a.wt = Math.max(5, 9 + a.bv.BW * 1.2 + randn() * 0.8);
   a.tag = nextTag(f); a.name = a.tag; a.named = false;
   return a;
@@ -247,7 +328,7 @@ function offspring(dam, sire, owner, recipient) {
 
 function litterSize(ewe) {
   const age = ageDays(ewe);
-  const f = clamp(ewe.base.prol - 1.6 + ewe.bv.NLB / 40 + (age < 600 ? -0.25 : age > 2200 ? -0.08 : 0.03), -0.5, 0.5);
+  const f = clamp(ewe.base.prol - 1.6 + ewe.bv.NLB / 40 + (age < 600 ? -0.25 : age > 2190 ? -0.08 - (age - 2190) / 1460 * 0.3 : 0.03), -0.5, 0.5);
   const p1 = clamp(0.09 - f * 0.12, 0.02, 0.25), p3 = clamp(0.10 + f * 0.12, 0.03, 0.2), p4 = clamp(0.01 + f * 0.02, 0, 0.03);
   const r = Math.random();
   return r < p1 ? 1 : r < p1 + p3 ? 3 : r < p1 + p3 + p4 ? 4 : 2;
@@ -260,7 +341,8 @@ export function conceptionRate(ewe, method) {
   if (ewe.synced) season = 1; // CIDR + PG600 brings her into heat even out of season
   const base = method === 'AI' ? 0.68 : method === 'ET' ? 0.6 : 0.93;
   const age = ageDays(ewe);
-  return Math.min(0.98, base * season * (age < 240 ? 0 : age < 330 ? 0.8 : 1) * (ewe.synced ? 1.25 : 1));
+  const old = age > 2190 ? Math.max(0.5, 1 - (age - 2190) / 1460 * 0.5) : 1;
+  return Math.min(0.98, base * season * old * (age < 240 ? 0 : age < 330 ? 0.8 : 1) * (ewe.synced ? 1.25 : 1));
 }
 export const SYNC_COST = 25;
 export function syncEwes(ids) {
@@ -297,11 +379,16 @@ function settle(ewe, sireSnap, method, donor) {
 }
 
 // ---------- player actions: breeding ----------
+export const ramCap = r => ageDays(r) < 365 ? 25 : 50;
+export const ramUsed = r => (r.svc || []).filter(d => S().day - d < 75).length;
 export function breedNatural(eweId, ramId) {
   const s = S(); const ewe = s.animals[eweId]; const ram = s.animals[ramId];
   if (!canBreed(ewe)) return 'Ewe is not available to breed.';
   if (!ram || ram.sex !== 'R' || ageDays(ram) < 200) return 'That ram is not old enough.';
   if (!usableRams().includes(ram)) return `${ram.name} isn’t available right now.`;
+  const cap = ramCap(ram); const used = ramUsed(ram);
+  if (used >= cap) return `${ram.name} has covered ${used} ewes this season — his limit is ${cap}.`;
+  (ram.svc = (ram.svc || []).filter(d => s.day - d < 75)).push(s.day);
   settle(ewe, snapshot(ram), 'Natural');
   return null;
 }
@@ -362,10 +449,24 @@ export function register(id) {
   addCash(-REG_FEE, `Registration — ${a.name}`); a.reg = true;
   return null;
 }
-export function wether(id) { const a = S().animals[id]; if (a.sex === 'R') { a.sex = 'W'; a.reg = a.reg; } }
+export function wether(id) { const a = S().animals[id]; if (a && a.sex === 'R') { a.sex = 'W'; a.reg = false; if (ageDays(a) > 90) a.lateW = true; } }
 // ---------- pens ----------
 export const PEN_COST = 150, PEN_CAP = 20;
-export const pens = () => S().pens || (S().pens = [{ id: 'main', name: 'Main pen', cap: 0 }]);
+export const pens = () => { const s = S(); if (!s.pens) s.pens = [{ id: 'main', name: 'Main pen', cap: 0 }]; if (!s.pens.some(p => p.id === 'creep')) s.pens.unshift({ id: 'creep', name: 'Creep pen', cap: 0, creep: true }); return s.pens; };
+export function setPenCare(penId, care, addString) {
+  for (const a of myAnimals()) if (penOf(a) === penId && ageDays(a) < 450) { a.care = { ...(a.care || defaultCare()), ...care }; if (addString) a.string = true; }
+}
+// bulk actions for a set of your animals
+export function bulkAct(ids, act, arg) {
+  const s = S(); const list = ids.map(id => s.animals[id]).filter(a => a && a.owner === 'P');
+  if (!list.length) return 'Pick at least one.';
+  if (act === 'move') { const room = penRoom(arg); if (list.length > room) return `That pen only has room for ${room} more.`; list.forEach(a => a.pen = arg); return null; }
+  if (act === 'wether') { list.forEach(a => wether(a.id)); return null; }
+  if (act === 'string') { list.forEach(a => { a.string = arg; if (arg && !a.care) a.care = defaultCare(); }); return null; }
+  if (act === 'shear') return shear(ids);
+  if (act === 'test') { const todo = list.filter(a => !a.tested[arg]); const c = (arg === 'scrapie' ? 30 : 35) * todo.length; if (s.cash < c) return 'Not enough cash.'; todo.forEach(a => testAnimal(a.id, arg)); return null; }
+  return 'Unknown action.';
+}
 export const penOf = a => (a.pen && pens().some(p => p.id === a.pen)) ? a.pen : 'main';
 export const penCount = id => myAnimals().filter(a => penOf(a) === id).length;
 export const penRoom = id => { const p = pens().find(x => x.id === id); return !p || !p.cap ? Infinity : p.cap - penCount(id); };
@@ -458,6 +559,8 @@ export function fairValue(a) {
   if (a.tested.dwarf && a.dwarf === 2) v = Math.min(v, Math.max(packerPrice(a) * 1.3, v * 0.35));
   if (a.tested.scrapie && a.scr === 'QQ') v *= 0.8;
   v *= (1 + (a.record?.filter(r => r.banner).length || 0) * 0.08);
+  const sb = S().sireStats?.[a.sire]?.banners || 0, db = S().damStats?.[a.dam]?.banners || 0;
+  v *= 1 + Math.min(0.5, sb * 0.03) + Math.min(0.3, db * 0.05); // proven sires and dams
   return Math.max(packerPrice(a), v);
 }
 export function embryoValue(e) { const q = (breedingIndex(e.dam) + breedingIndex(e.sire)) / 2; return 90 + 16 * Math.exp((q - 55) / 7.5); }
@@ -652,28 +755,56 @@ export function listCategory(a) {
   if (a.preg && (a.preg.ok || S().day < a.preg.check)) return 'bred';
   return ageDays(a) < 300 ? 'lamb' : 'ewe';
 }
-function consign(f, a) {
+function consign(f, a, sale) {
   const s = S();
   const fv = fairValue(a) * repMult(f.id);
-  const mode = Math.random() < 0.6 ? 'auction' : 'buy';
-  const L = { id: uid('L'), kind: 'animal', aid: a.id, seller: f.id, mode, start: s.day, end: s.day + (mode === 'auction' ? irnd(4, 9) : irnd(10, 25)) };
+  const mode = sale ? 'auction' : Math.random() < 0.6 ? 'auction' : 'buy';
+  const L = { id: uid('L'), kind: 'animal', aid: a.id, seller: f.id, mode, start: s.day, end: sale ? sale.close : s.day + (mode === 'auction' ? irnd(4, 9) : irnd(10, 25)), sale: sale?.id };
   L.price = mode === 'auction' ? Math.max(100, Math.round(fv * rnd(0.3, 0.55) / 25) * 25) : Math.round(fv * rnd(0.95, 1.4) / 25) * 25;
   L.reserve = mode === 'auction' ? L.price : 0;
   if (mode === 'auction') L.bidders = makeBidders(fairValue(a), f.id, lotType(a), L.end - s.day);
   a.listing = L.id; s.listings.push(L);
 }
 // AI flocks consign lots — prospects by season; bred ewes, semen, embryos year-round
+// Farm online sales: announced ahead, 10–30 lots, all close the same evening
+const SALE_NAMES = { 0: 'Winter', 1: 'Winter', 2: 'Spring', 3: 'Spring', 4: 'Spring', 5: 'Summer', 6: 'Summer', 7: 'Summer', 8: 'Fall', 9: 'Fall', 10: 'Fall', 11: 'Holiday' };
+function farmSales(idx, own) {
+  const s = S(); const m = monthOf(s.day); s.sales = s.sales || [];
+  const prospect = (m >= 1 && m <= 5) || (m >= 7 && m <= 9);
+  // announce new sales
+  for (let k = 0; k < (prospect ? 2 : 1); k++) if (Math.random() < (prospect ? 0.8 : 0.35)) {
+    const f = pick(s.flocks.filter(x => x.id !== 'P' && x.skill > 0.25 && !s.sales.some(y => y.f === x.id && y.close > s.day)));
+    if (f) { const open = s.day + irnd(7, 21); const om = monthOf(open); const kind = om >= 2 && om <= 5 && f.type !== 'breed' ? 'Prospect' : om >= 1 && om <= 9 ? 'Ewe & Ram' : 'Bred Ewe'; s.sales.push({ id: uid('S'), f: f.id, name: `${f.name} ${SALE_NAMES[monthOf(open)]} ${kind} Online Sale`, open, close: open + irnd(5, 8), n: irnd(10, 30), kind, lots: 0 }); }
+  }
+  // open sales whose day has come
+  for (const sale of s.sales) {
+    if (sale.open !== s.day) continue;
+    const f = flock(sale.f); if (!f) continue;
+    let pool = own(f).filter(a => !a.preg || sale.kind === 'Bred Ewe');
+    if (sale.kind === 'Prospect') pool = pool.filter(a => ageDays(a) >= 40 && ageDays(a) <= 200 && !a.keep && a.sex !== 'R');
+    else if (sale.kind === 'Ewe & Ram') pool = pool.filter(a => ageDays(a) >= 40 && ageDays(a) <= 400 && (!a.keep || a.sex === 'R'));
+    else pool = pool.filter(a => a.sex === 'E' && a.preg?.ok && s.day >= a.preg.check && ageDays(a) < 2000);
+    const lots = shuffle(pool).slice(0, sale.n);
+    if (lots.length < 5) { sale.cancel = true; continue; }
+    lots.forEach(a => consign(f, a, sale)); sale.lots = lots.length;
+    if (lots.length && (s.favs || []).includes(f.id)) news(`${sale.name} is open — ${lots.length} lots, closes ${fmtShort(sale.close)}.`, 'sale', true);
+  }
+  s.sales = s.sales.filter(x => !x.cancel && x.close >= s.day - 3);
+}
+export const toggleFav = fid => { const s = S(); s.favs = s.favs || []; s.favs = s.favs.includes(fid) ? s.favs.filter(x => x !== fid) : [...s.favs, fid]; };
 function aiListings() {
   const s = S(); const m = monthOf(s.day);
-  if (s.listings.filter(l => l.seller !== 'P').length > 150) return;
   const flocks = s.flocks.filter(x => x.id !== 'P');
   const idx = byOwner(); const own = f => (idx.get(f.id) || []).filter(a => !a.listing && S().animals[a.id] && a.owner === f.id);
+  farmSales(idx, own);
+  if (s.listings.filter(l => l.seller !== 'P').length > 420) return;
   const prospect = (m >= 1 && m <= 5) || (m >= 7 && m <= 9);
-  const sales = prospect ? irnd(1, 4) : irnd(0, 1);
+  const sales = prospect ? irnd(9, 15) : irnd(0, 2);
   for (let i = 0; i < sales; i++) {
     const f = pick(flocks);
-    const lots = own(f).filter(a => ageDays(a) >= 40 && ageDays(a) <= 160 && a.sex !== 'R' && !a.keep && !a.preg);
-    shuffle(lots).slice(0, irnd(2, 6)).forEach(a => consign(f, a));
+    if (s.sales.some(y => y.f === f.id && y.close >= s.day)) continue; // saving lambs for their sale
+    const lots = own(f).filter(a => ageDays(a) >= 40 && ageDays(a) <= 190 && a.sex !== 'R' && !a.keep && !a.preg);
+    shuffle(lots).slice(0, irnd(4, 9)).forEach(a => consign(f, a));
   }
   // bred ewes — year-round (flocks lamb in different seasons)
   for (let k = 0; k < irnd(1, 2); k++) if (Math.random() < 0.7) {
@@ -715,7 +846,23 @@ function aiListings() {
 }
 
 // ---------- sire directory ----------
-export const TANK_FEE = 10;
+export const TANK_FEE = 10, OVERHEAD = 100;
+export const LOAN_MAX = 25000, LOAN_RATE = 0.08, LOAN_MONTHS = 24;
+export function takeLoan(amount) {
+  const s = S(); amount = Math.round(+amount || 0);
+  const owed = s.loan?.balance || 0;
+  if (amount < 500) return 'Minimum loan is $500.';
+  if (owed + amount > LOAN_MAX) return `You can borrow up to ${money(LOAN_MAX - owed)} more.`;
+  const bal = owed + amount; const r = LOAN_RATE / 12;
+  s.loan = { balance: bal, rate: LOAN_RATE, payment: Math.round(bal * r / (1 - Math.pow(1 + r, -LOAN_MONTHS))), since: s.day };
+  addCash(amount, `Bank loan (${(LOAN_RATE * 100).toFixed(0)}% / ${LOAN_MONTHS} months)`);
+  return null;
+}
+export function payLoan(amount) {
+  const s = S(); if (!s.loan) return 'No loan.'; amount = Math.min(Math.round(+amount || 0), Math.round(s.loan.balance));
+  if (amount <= 0) return 'Enter an amount.'; if (s.cash < amount) return 'Not enough cash.';
+  addCash(-amount, 'Extra loan payment'); s.loan.balance -= amount; if (s.loan.balance < 1) s.loan = null; return null;
+}
 export const START_FLOCKS = 350;
 export const SEVEN_MO = 213;
 export const DIRECTORY_FEE = 100, COLLECT_FEE = 200, LEASE_DAYS = 60;
@@ -841,12 +988,45 @@ export function findShow(key) {
   if (key.startsWith('wj-')) { const [, d, i] = key.split('-'); return jackpotsOn(+d)[+i] || null; }
   return upcomingShows(40, { noJackpots: true }).find(x => x.key === key) || null;
 }
+// A circuit of recurring judges — each with a style and a pick history you can study
+function judgePool() {
+  const s = S();
+  if (!s.judgePool) {
+    const first = ['Jake', 'Kelly', 'Travis', 'Shane', 'Brooke', 'Cody', 'Mark', 'Jill', 'Ryan', 'Tanner', 'Kyle', 'Lindsay', 'Chad', 'Dustin', 'Amy', 'Brett', 'Wes', 'Casey', 'Logan', 'Morgan', 'Blake', 'Hunter', 'Jenna', 'Clay'];
+    s.judgePool = Array.from({ length: 60 }, (_, i) => ({ name: `${Math.random() < 0.2 ? 'Dr. ' : ''}${pick(first)} ${pick(SURNAMES)}`, style: i % JUDGE_STYLES.length, from: wpick(STATE_WEIGHT) }));
+  }
+  return s.judgePool;
+}
 export function judgeFor(key) {
   const s = S();
-  if (!s.judges[key]) s.judges[key] = { name: `${pick(['Dr. ', '', '', ''])}${pick(['Jake', 'Kelly', 'Travis', 'Shane', 'Brooke', 'Cody', 'Mark', 'Jill', 'Ryan', 'Tanner', 'Kyle', 'Lindsay', 'Chad', 'Dustin', 'Amy', 'Brett'])} ${pick(SURNAMES)}`, style: irnd(0, JUDGE_STYLES.length - 1), from: pick(Object.keys(STATE_WEIGHT)) };
+  if (!s.judges[key]) { const pool = judgePool(); s.judges[key] = { ...pool[hashStr(key) % pool.length] }; }
   return s.judges[key];
 }
-export const marketClass = a => marketClassOf(a);
+export const judgeHistory = name => (S().jhist || {})[name] || [];
+function recordJudge(judge, show, grand) {
+  const s = S(); s.jhist = s.jhist || {};
+  const h = s.jhist[judge.name] || (s.jhist[judge.name] = []);
+  h.unshift({ day: s.day, show: show.short, name: grand.name, sex: sexText(grand), breed: breedLabel(grand), wt: Math.round(grand.wt), cls: marketClassFor(grand) });
+  if (h.length > 8) h.length = 8;
+}
+// Hauling — round trip from your home state to the show, plus a per-head charge
+function milesBetween(a, b) {
+  const [la1, lo1] = STATE_LL[a] || [39, -95], [la2, lo2] = STATE_LL[b] || [39, -95];
+  const r = Math.PI / 180, d = Math.sin((la2 - la1) * r / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin((lo2 - lo1) * r / 2) ** 2;
+  return Math.round(3959 * 2 * Math.asin(Math.sqrt(d)) * 1.2);
+}
+export const showState = show => show.host || SHOW_STATE[show.id] || S().home;
+export function haulCost(show, head) { const mi = show.tier === 'county' ? 20 : milesBetween(S().home, showState(show)) || 40; return Math.round(25 + mi * 2 * 0.9 + head * 5); }
+export function fleeceDays(a, day = S().day) { return day - (a.shorn ?? a.birth); }
+export const SHEAR_COST = 10;
+export function shear(ids) {
+  const s = S(); const list = ids.map(id => s.animals[id]).filter(a => a && a.owner === 'P');
+  if (!list.length) return 'Nothing to shear.';
+  if (s.cash < list.length * SHEAR_COST) return 'Not enough cash.';
+  addCash(-list.length * SHEAR_COST, `Shearing — ${list.length} head`); list.forEach(a => a.shorn = s.day);
+  return null;
+}
+export const marketClass = a => marketClassFor(a);
 export function marketEligible(a, show) {
   const age = ageDays(a) + (show.day - S().day);
   if (a.sex === 'R') return 'Ram lambs must be wethered to show market';
@@ -859,7 +1039,8 @@ export function breedingEligible(a, show) {
   if (!a.reg) return 'Must be a registered purebred';
   if (a.sex === 'W') return 'Wethers show market only';
   if (a.spider === 2) return 'Not showable';
-  if (age < 60 || age > 760) return 'Lambs and yearlings only';
+  if (age < 60 || age >= 365) return 'Registered shows are lamb classes only (under 12 months)';
+  if (a.blk === 2 && a.breed !== 'Natural Colored') return 'Black lambs can’t show in a white-breed registered show';
   return null;
 }
 export function projectedWeight(a, days) {
@@ -889,8 +1070,13 @@ export function scratch(key, id, div) { const e = S().entries[key]; if (e && e[d
 export const entriesFor = id => Object.entries(S().entries).filter(([, e]) => ['market', 'breeding', 'commercial'].some(d => (e[d] || []).includes(id))).map(([k]) => k);
 
 function aiPresentation(f) { const k = f?.skill ?? 0.5; return { train: 45 + k * 50, fit: 50 + k * 45, tone: k * 3.5 }; }
+function fleecePenalty(a, show) {
+  if (a.owner !== 'P') return 0;
+  const d = fleeceDays(a, show.day);
+  return d < 4 ? 1.5 : d > 21 ? Math.min(6, (d - 21) * 0.12) : 0;
+}
 function showScore(a, judge, kind, show) {
-  const w = JUDGE_STYLES[judge.style].w;
+  const J = JUDGE_STYLES[judge.style]; const w = J.w; const q = J.q || {};
   const pres = a.owner === 'P' ? { train: a.train, fit: a.fit, tone: a.tone } : aiPresentation(flock(a.owner));
   const save = { fit: a.fit, tone: a.tone };
   a.fit = pres.fit; a.tone = pres.tone;
@@ -901,9 +1087,18 @@ function showScore(a, judge, kind, show) {
     const ratio = a.wt / frameOf(a); const flex = a.dwarf === 1 ? 0.07 : 0;
     if (ratio < 0.86 - flex) v -= (0.86 - flex - ratio) * 70;
     if (ratio > 1.06 + flex) v -= (ratio - 1.06 - flex) * 55;
+    if (a.sex === 'W') v += 2.7 * (q.wether ?? 1);
+    if (q.big) v += q.big * clamp((ratio - 0.97) * 14, -2, 2);
+    if (q.fresh) v += q.fresh * 0.08 * (phen(a, 'fresh') - 55);
+    if (BREEDS[a.breed]?.reg !== false && !a.breed.startsWith('Wether-Type') && a.breed !== 'Commercial') v -= 3; // registered breeding-type sheep rarely beat club lambs
+    v -= fleecePenalty(a, show);
   } else {
-    const bw = { structure: .24, balance: .2, bone: .14, look: .16, muscle: .14, dimension: .12 };
-    for (const t of TRAITS) v += (bw[t] * 0.6 + w[t] * 0.4) * phen(a, t);
+    const reg = kind === 'breeding';
+    const bw = reg ? { structure: .2, balance: .17, bone: .11, look: .13, muscle: .12, dimension: .1, breed: .1, fresh: .07 } : { structure: .2, balance: .18, bone: .1, look: .14, muscle: .15, dimension: .12, breed: .03, fresh: .08 };
+    for (const t of TRAITS) v += (bw[t] * 0.6 + (w[t] || 0) * 0.4) * phen(a, t);
+    if (reg && q.purist) v += q.purist * 0.08 * (phen(a, 'breed') - 55);
+    if (q.fresh) v += q.fresh * 0.05 * (phen(a, 'fresh') - 55);
+    if (!reg) v -= fleecePenalty(a, show);
     const exp = weightForAge(ageDays(a), frameOf(a), a.sex);
     v += clamp((a.wt / exp - 1) * 20, -6, 5);
   }
@@ -917,7 +1112,7 @@ function splitByWeight(list, max = 12) {
   for (let i = 0; i < n; i++) out.push(list.slice(Math.floor(i * list.length / n), Math.floor((i + 1) * list.length / n)));
   return out.filter(c => c.length);
 }
-const slim = (a, score) => ({ id: a.id, name: a.name, flock: flockName(a.owner), owner: a.owner, wt: Math.round(a.wt), breed: breedLabel(a), sire: a.sireName, sc: score });
+const slim = (a, score) => ({ id: a.id, sex: a.sex, face: a.face, blk: a.blk, name: a.name, flock: flockName(a.owner), owner: a.owner, wt: Math.round(a.wt), breed: breedLabel(a), sire: a.sireName, sc: score });
 function runClass(list, judge, kind, show) {
   return list.map(a => ({ a, sc: showScore(a, judge, kind, show) })).sort((x, y) => y.sc - x.sc);
 }
@@ -995,8 +1190,8 @@ function placeClasses(classes, show, res, kind, prefix, seriesTag) {
     if (p.a.owner === 'P') {
       const prem = Math.round(T.prem * (kind === 'market' ? 1 : 0.8) * Math.max(0, 1 - i * 0.12));
       if (prem > 0) addCash(prem, `Premium — ${show.short} ${ordinal(i + 1)}`);
-      res.mine.push({ name: p.a.name, text: `${ordinal(i + 1)} of ${c.placed.length} — ${prefix}${c.label}` });
-      p.a.record.push({ key: show.key, show: show.short, day: s.day, text: `${ordinal(i + 1)} of ${c.placed.length}, ${prefix}${c.label.split(' — ').pop()}` });
+      res.mine.push({ name: p.a.name, id: p.a.id, pl: i + 1, cls: c.label, text: `${ordinal(i + 1)} of ${c.placed.length} — ${prefix}${c.label}` });
+      p.a.record.push({ pl: i + 1, key: show.key, show: show.short, day: s.day, text: `${ordinal(i + 1)} of ${c.placed.length}, ${prefix}${c.label.split(' — ').pop()}` });
       if (i === 0) achieve('first_class');
     }
   }));
@@ -1012,11 +1207,13 @@ function divAward(show, c, r, title, T) {
   if (c) { award(c.a, show, `Champion ${title}`, T.breedCh, 'breed'); if (show.series) seriesPoints(show, c.a, 5); }
   if (r) { award(r.a, show, `Reserve Champion ${title}`, T.breedCh / 2, 'breedres'); if (show.series) seriesPoints(show, r.a, 3); }
 }
+export const SOC = { state: [[6000, 15000], [3000, 8000], [800, 2500]], major: [[25000, 80000], [10000, 30000], [2000, 6000]], national: [[15000, 40000], [6000, 15000], [1500, 4000]] };
 export function runShow(show) {
   const s = S(); const judge = judgeFor(show.key); const T = TIER[show.tier];
   const e = s.entries[show.key] || { market: [], breeding: [], commercial: [] };
   const plan = planEntries(show);
-  const res = { key: show.key, id: show.id, name: show.name, tier: show.tier, series: show.series || null, day: s.day, judge: { ...judge, style: JUDGE_STYLES[judge.style].label }, market: null, breeding: null, commercial: null, mine: [] };
+  const res = { key: show.key, id: show.id, name: show.name, tier: show.tier, series: show.series || null, day: s.day, judge: { ...judge, style: JUDGE_STYLES[judge.style].label }, market: null, breeding: null, commercial: null, soc: null, mine: [] };
+  const regWinners = new Set(); // banner winners on the registered side can't also win on the club side that day
   const take = (div, elig, weigh) => {
     const out = [];
     for (const id of (e[div] || [])) {
@@ -1024,18 +1221,63 @@ export function runShow(show) {
       const why = elig(a, show);
       if (why) { res.mine.push({ name: a.name, text: `Scratched — ${why}` }); continue; }
       if (weigh && (a.wt < show.minWt || a.wt > show.maxWt)) { res.mine.push({ name: a.name, text: `Did not make weight (${Math.round(a.wt)} lb; limits ${show.minWt}–${show.maxWt})` }); continue; }
+      if (div !== 'breeding' && regWinners.has(a.id)) { res.mine.push({ name: a.name, text: `Not eligible on the club side — already won on the registered side today` }); continue; }
       out.push(a);
     }
-    for (const id of plan[div]) { const a = s.animals[id]; if (a && a.owner !== 'P' && !a.listing && !elig(a, show) && (!weigh || (a.wt >= show.minWt && a.wt <= show.maxWt))) out.push(a); }
+    for (const id of plan[div]) { const a = s.animals[id]; if (a && a.owner !== 'P' && !a.listing && !elig(a, show) && (!weigh || (a.wt >= show.minWt && a.wt <= show.maxWt)) && (div === 'breeding' || !regWinners.has(a.id))) out.push(a); }
     for (const a of plan.locals) if (a.div === div) out.push(a);
     return out;
   };
+  const shown = new Set();
 
-  // ----- market lambs -----
+  // ----- registered breeding sheep (lamb classes only) -----
+  if (show.breeding) {
+    const br = take('breeding', breedingEligible, false);
+    const byBreed = {};
+    for (const a of br) (byBreed[a.breed] ||= []).push(a);
+    const breeds = [];
+    for (const [bname, list] of Object.entries(byBreed).sort()) {
+      const classes = [];
+      for (const [lab, sx] of [['Ewe Lamb', 'E'], ['Ram Lamb', 'R']]) {
+        const l = list.filter(a => a.sex === sx); if (!l.length) continue;
+        splitByWeight(l).forEach((cl, i, arr) => classes.push({ label: `${lab}${arr.length > 1 ? ` — Class ${i + 1}` : ''}`, sex: sx, placed: runClass(cl, judge, 'breeding', show) }));
+      }
+      placeClasses(classes, show, res, 'breeding', `${bname} `);
+      const [ce, re] = champs(classes.filter(c => c.sex === 'E')), [cr, rr] = champs(classes.filter(c => c.sex === 'R'));
+      divAward(show, ce, re, `${bname} Ewe`, T); divAward(show, cr, rr, `${bname} Ram`, T);
+      [ce, re, cr, rr].forEach(x => x && regWinners.add(x.a.id));
+      breeds.push({ breed: bname, classes: classes.map(c => ({ label: `${bname} ${c.label}`, placed: c.placed.map(p => slim(p.a)) })), ce: ce && slim(ce.a), re: re && slim(re.a), cr: cr && slim(cr.a), rr: rr && slim(rr.a) });
+    }
+    br.forEach(a => shown.add(a));
+    if (breeds.length) res.breeding = { breeds, count: br.length };
+  }
+
+  // ----- commercial ewes (club side; any ewe lamb or yearling, registered or not) -----
+  if (show.commercial) {
+    const ce = take('commercial', commercialEligible, false);
+    if (ce.length) {
+      const classes = [];
+      for (const [lab, l] of [['Ewe Lambs', ce.filter(a => ageDays(a) < 365)], ['Yearling Ewes', ce.filter(a => ageDays(a) >= 365)]])
+        if (l.length) splitByWeight(l).forEach((cl, i, arr) => classes.push({ label: `Commercial ${lab}${arr.length > 1 ? ` — Class ${i + 1}` : ''} (${Math.round(cl[0].wt)}–${Math.round(cl[cl.length - 1].wt)} lb)`, placed: runClass(cl, judge, 'commercial', show) }));
+      placeClasses(classes, show, res, 'commercial', '');
+      const [c1, r1] = champs(classes);
+      divAward(show, c1, r1, 'Commercial Ewe', T);
+      ce.forEach(a => shown.add(a));
+      res.commercial = { classes: classes.map(c => ({ label: c.label, placed: c.placed.map(p => slim(p.a)) })), champ: c1 && slim(c1.a), resv: r1 && slim(r1.a), count: ce.length };
+    }
+  }
+
+  // ----- market lambs (club side; breed check assigns classes by characteristics) -----
   const mk = take('market', marketEligible, true);
   if (mk.length) {
     const groups = {};
-    for (const a of mk) { const g = show.tier === 'county' ? 'Market Lambs' : marketClassOf(a); (groups[g] ||= []).push(a); }
+    for (const a of mk) {
+      const g = show.tier === 'county' ? 'Market Lambs' : marketClassFor(a); (groups[g] ||= []).push(a);
+      if (a.owner === 'P' && show.tier !== 'county' && BREEDS[a.breed]?.reg === false && !isNatural(a)) {
+        const top = Object.entries(a.blood || {}).sort((x, y) => y[1] - x[1])[0];
+        if (top && BREED_CHECK[top[0]] && top[1] >= 0.5 && g !== top[0]) res.mine.push({ name: a.name, text: `Breed check: didn’t pass as ${top[0]} — moved to ${g}` });
+      }
+    }
     const divs = [];
     for (const [g, list] of Object.entries(groups)) {
       const classes = splitByWeight(list).map((cl, i) => ({ label: `${g} — Class ${i + 1} (${Math.round(cl[0].wt)}–${Math.round(cl[cl.length - 1].wt)} lb)`, placed: runClass(cl, judge, 'market', show) }));
@@ -1050,42 +1292,32 @@ export function runShow(show) {
     if (divs.length > 1) divs.forEach(d => divAward(show, d.champ, d.resv, d.name, T));
     award(grand.a, show, 'Grand Champion Market Lamb', T.grand, 'grand');
     if (resGrand) award(resGrand.a, show, 'Reserve Grand Champion Market Lamb', T.reserve, 'reserve');
+    recordJudge(judge, show, grand.a);
     news(`${show.short}: Grand Champion Market Lamb — ${grand.a.name}, ${flockName(grand.a.owner)}${resGrand ? `; Reserve — ${resGrand.a.name}, ${flockName(resGrand.a.owner)}` : ''}.`, 'show', grand.a.owner === 'P' || resGrand?.a.owner === 'P');
+    mk.forEach(a => shown.add(a));
     res.market = { divs: divs.map(d => ({ name: d.name, champ: slim(d.champ.a), resv: d.resv && slim(d.resv.a), classes: d.classes.map(c => ({ label: c.label, placed: c.placed.map(p => slim(p.a)) })) })), grand: slim(grand.a), resGrand: resGrand && slim(resGrand.a), count: mk.length };
-  }
 
-  // ----- registered breeding sheep -----
-  if (show.breeding) {
-    const br = take('breeding', breedingEligible, false);
-    const byBreed = {};
-    for (const a of br) (byBreed[a.breed] ||= []).push(a);
-    const breeds = [];
-    for (const [bname, list] of Object.entries(byBreed).sort()) {
-      const cls = (sex, lamb) => list.filter(a => a.sex === sex && (ageDays(a) < 365) === lamb);
-      const classes = [];
-      for (const [lab, l] of [['Ewe Lamb', cls('E', true)], ['Yearling Ewe', cls('E', false)], ['Ram Lamb', cls('R', true)], ['Yearling Ram', cls('R', false)]])
-        if (l.length) classes.push({ label: lab, sex: lab.includes('Ewe') ? 'E' : 'R', placed: runClass(l, judge, 'breeding', show) });
-      placeClasses(classes, show, res, 'breeding', `${bname} `);
-      const [ce, re] = champs(classes.filter(c => c.sex === 'E')), [cr, rr] = champs(classes.filter(c => c.sex === 'R'));
-      divAward(show, ce, re, `${bname} Ewe`, T); divAward(show, cr, rr, `${bname} Ram`, T);
-      breeds.push({ breed: bname, classes: classes.map(c => ({ label: `${bname} ${c.label}`, placed: c.placed.map(p => slim(p.a)) })), ce: ce && slim(ce.a), re: re && slim(re.a), cr: cr && slim(cr.a), rr: rr && slim(rr.a) });
-    }
-    if (breeds.length) res.breeding = { breeds, count: br.length };
-  }
-
-  // ----- commercial ewes (any breed or type, registered or not) -----
-  if (show.commercial) {
-    const ce = take('commercial', commercialEligible, false);
-    if (ce.length) {
-      const classes = [];
-      for (const [lab, l] of [['Ewe Lambs', ce.filter(a => ageDays(a) < 365)], ['Yearling Ewes', ce.filter(a => ageDays(a) >= 365)]])
-        if (l.length) splitByWeight(l).forEach((cl, i, arr) => classes.push({ label: `Commercial ${lab}${arr.length > 1 ? ` — Class ${i + 1}` : ''} (${Math.round(cl[0].wt)}–${Math.round(cl[cl.length - 1].wt)} lb)`, placed: runClass(cl, judge, 'breeding', show) }));
-      placeClasses(classes, show, res, 'commercial', '');
-      const [c1, r1] = champs(classes);
-      divAward(show, c1, r1, 'Commercial Ewe', T);
-      res.commercial = { classes: classes.map(c => ({ label: c.label, placed: c.placed.map(p => slim(p.a)) })), champ: c1 && slim(c1.a), resv: r1 && slim(r1.a), count: ce.length };
+    // ----- Sale of Champions (terminal, required) -----
+    const band = SOC[show.tier];
+    if (band) {
+      const sellers = [[grand.a, 'Grand Champion', band[0]], resGrand && [resGrand.a, 'Reserve Grand Champion', band[1]], ...(divs.length > 1 ? divs.filter(d => d.champ.a !== grand.a && d.champ.a !== resGrand?.a).map(d => [d.champ.a, `Champion ${d.name}`, band[2]]) : [])].filter(Boolean);
+      res.soc = [];
+      for (const [a, title, [lo, hi]] of sellers) {
+        if (a.temp) continue;
+        const price = Math.round(rnd(lo, hi) / 50) * 50;
+        res.soc.push({ name: a.name, flock: flockName(a.owner), owner: a.owner, title, price });
+        recordSale({ name: a.name, breed: breedLabel(a), type: `${title} — ${show.short} Sale of Champions`, price, seller: flockName(a.owner), buyer: 'Sale of Champions', day: s.day, mine: a.owner === 'P' });
+        if (a.owner === 'P') { addCash(price, `Sale of Champions — ${a.name} (${title}, ${show.short})`); news(`${a.name} sold in the ${show.short} Sale of Champions for ${money(price)}.`, 'good', true); if (price >= 5000) achieve('sale_5k'); if (price >= 1000) achieve('sale_1k'); }
+        if (a.listing) cancelListingFor(a.id);
+        removeAnimal(a.id);
+      }
     }
   }
+
+  // freshness: showing wears them down a little; recovers with rest
+  for (const a of shown) if (!a.temp && s.animals[a.id]) a.load = Math.min(6, (a.load || 0) + 1);
+  const myShown = [...shown].filter(a => a.owner === 'P').length;
+  if (myShown) addCash(-haulCost(show, myShown), `Hauling — ${show.short} (${myShown} head)`);
 
   const hadMine = ['market', 'breeding', 'commercial'].some(d => (e[d] || []).length);
   s.results.unshift(res);
@@ -1135,7 +1367,7 @@ function seriesPayout(year) {
   }
 }
 
-const MO = ['Blackface Cross', 'Whiteface Cross', 'Dorper', 'Dorset', 'Hampshire', 'Oxford', 'Shropshire', 'Southdown', 'Suffolk', 'AOB', 'Market Lambs'];
+const MO = ['Blackface Cross', 'Whiteface Cross', 'Natural', 'Dorper', 'Dorset', 'Hampshire', 'Oxford', 'Shropshire', 'Southdown', 'Suffolk', 'AOB', 'Market Lambs'];
 const MARKET_ORDER = n => MO.indexOf(n);
 export const ordinal = n => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
 
@@ -1147,6 +1379,7 @@ function award(a, show, title, money_, kind) {
   if (f) { f.rep = (f.rep || 0) + rep; f.banners = (f.banners || 0) + 1; }
   a.record = a.record || []; a.record.push({ key: show.key, show: show.short, day: s.day, text: title, banner: true });
   if (a.sire) { const st = s.sireStats[a.sire] || (s.sireStats[a.sire] = { name: a.sireName, owner: a.sireOwner, breed: '', banners: 0 }); st.banners++; }
+  if (a.dam) { s.damStats = s.damStats || {}; const dt = s.damStats[a.dam] || (s.damStats[a.dam] = { name: a.damName, banners: 0 }); dt.banners++; }
   if (a.owner === 'P') {
     addCash(money_, `${title} — ${show.short}`);
     toast(`🎗️ ${title} — ${a.name} (${show.short})`, 'show');
@@ -1226,11 +1459,13 @@ export const STARTER_AGES = [['lamb3', 'Lamb, 2–3 mo', 65, 95], ['lamb6', 'Lam
 export const STARTER_LIMITS = { E: 15, R: 3, W: 4 };
 export function makeStarter(breedKey, sex, ageKey) {
   const ag = STARTER_AGES.find(x => x[0] === ageKey) || STARTER_AGES[3];
-  const cross = breedKey === 'Blackface cross' || breedKey === 'Whiteface cross';
+  const cross = ['Blackface cross', 'Whiteface cross', 'Speckleface cross', 'Natural (club)'].includes(breedKey);
   const breed = cross ? 'Crossbred' : breedKey;
-  const face = breedKey === 'Whiteface cross' ? 'white' : breedKey === 'Blackface cross' ? 'black' : undefined;
+  const face = breedKey === 'Whiteface cross' ? 'white' : cross ? 'black' : undefined;
   const comp = breedKey === 'Whiteface cross' ? 'Dorset × Montadale' : pick(['Hampshire × Suffolk', 'Suffolk × Hampshire', 'Hampshire × Southdown', 'Suffolk × Shropshire']);
   const a = makeFounder({ breed, sex, ageDays: irnd(ag[2], ag[3]), owner: 'P', q: rnd(1, 6) + (sex === 'R' ? 1 : 0), comp, face });
+  if (breedKey === 'Speckleface cross') { a.fg = 'BW'; a.face = Math.random() < 0.55 ? 'speckle' : 'smut'; a.comp = 'Hampshire × Dorset'; a.blood = bloodOf('Crossbred', a.comp); }
+  if (breedKey === 'Natural (club)') { a.blk = 2; a.fg = 'BB'; a.face = 'black'; }
   if (ageDays(a) < 365) { a.cond = 2.8; a.fit = 60; a.train = 50; }
   return a;
 }
@@ -1305,9 +1540,16 @@ export function simDay() {
     }
     // growth
     if (age < 0) continue;
+    if (a.load) a.load = a.load > 0.02 ? a.load * 0.96 : 0;
+    if (a.owner === 'P') {
+      if (a.needsHome && age >= 3) { bottle(a.id); news(`${a.name} went on the bottle (auto, ${money(BOTTLE_COST)}).`, 'info', true); }
+      if (age === 60 && a.pen === 'creep') { a.pen = penRoom('main') > 0 ? 'main' : 'main'; if (!s.weanNote || s.weanNote !== d) { s.weanNote = d; news(`Weaned lambs moved from the creep pen to the Main pen.`, 'info', true); } }
+    }
     if (age < 60) {
-      const lf = a.litter >= 4 ? 0.66 : a.litter === 3 ? 0.75 : a.litter === 2 ? 0.86 : 1;
-      a.lastAdg = (0.5 + 0.025 * a.bv.WW + 0.03 * (a.damMilk || 0)) * lf * (a.spider === 2 ? 0.5 : 1);
+      const lf = a.bottle ? 0.88 : a.litter >= 4 ? 0.66 : a.litter === 3 ? 0.75 : a.litter === 2 ? 0.86 : 1;
+      const creep = a.owner === 'P' && s.creepFeed !== false && age >= 14 ? 1.12 : a.owner !== 'P' ? 1.06 : 1;
+      if (creep > 1 && a.owner === 'P') feedCost += 0.08;
+      a.lastAdg = (0.5 + 0.025 * a.bv.WW + 0.03 * (a.damMilk || 0)) * lf * creep * (a.spider === 2 ? 0.5 : 1);
       a.wt += a.lastAdg; a.cond += (2.6 - a.cond) * 0.05;
     } else if (age < 450 && a.sex !== 'R' || age < 300) {
       let eff;
@@ -1341,8 +1583,15 @@ export function simDay() {
       else a.keep = true;
     }
   }
+  if (!Number.isFinite(feedCost + upkeep)) { console.warn('feed cost NaN'); feedCost = 0; upkeep = 0; }
   if (feedCost + upkeep > 0) { s.cash -= feedCost + upkeep; s.feedToday = feedCost + upkeep; s.feedMonth = (s.feedMonth || 0) + feedCost + upkeep; }
   if (dm === 1 && (s.tank.length || s.embryos.length)) addCash(-TANK_FEE, 'Semen tank & embryo storage (monthly)');
+  if (dm === 1) addCash(-OVERHEAD, 'Farm overhead — bedding, fencing, utilities (monthly)');
+  if (dm === 1 && s.loan && s.loan.balance > 0) {
+    const L = s.loan; const int = L.balance * L.rate / 12; const pay = Math.min(L.balance + int, L.payment);
+    L.balance = Math.max(0, L.balance + int - pay); addCash(-pay, `Loan payment (${money(int)} interest)`);
+    if (L.balance < 1) { s.loan = null; news('Your bank loan is paid off.', 'good', true); }
+  }
   if (dm === 1 && s.feedMonth) { s.ledger.unshift({ day: d, n: -Math.round(s.feedMonth), why: 'Feed, bedding & upkeep (last month)' }); s.feedMonth = 0; }
 
   // leased rams go home
@@ -1383,13 +1632,15 @@ function lamb(ewe) {
     if (Math.random() < 0.035 + F * 1.3 + (p.count >= 4 ? 0.12 : p.count === 3 ? 0.07 : 0)) { still++; continue; }
     const a = offspring(dam, sire, ewe.owner, p.donor ? ewe : null);
     a.litter = p.count; addAnimal(a); born.push(a);
-    if (ewe.owner === 'P') a.pen = penRoom(penOf(ewe)) > 0 ? penOf(ewe) : 'main';
+    if (ewe.owner === 'P') a.pen = 'creep';
     if (s.animals[dam.id]) s.animals[dam.id].prog++;
     if (s.animals[sire.id]) s.animals[sire.id].prog++;
   }
   ewe.lambed = s.day;
   if (ewe.owner === 'P') {
     s.newLambs = (s.newLambs || []).concat(born.map(a => a.id));
+    if (born.length > 2) born.slice(2).forEach(a => { a.needsHome = true; a.damId = ewe.id; s.bottleQ = (s.bottleQ || []).concat(a.id); });
+    if (born.length > 2) news(`${ewe.name} can only raise two — ${born.length - 2} extra lamb${born.length > 3 ? 's need' : ' needs'} grafting onto another ewe or bottle feeding.`, 'bad', true);
     s.stats.born += born.length;
     if (born.length) achieve('first_lamb');
     if (p.count === 3) achieve('triplets');
@@ -1401,6 +1652,25 @@ function lamb(ewe) {
   }
 }
 
+// Extra lambs: graft onto a ewe that lost/has a single, or bottle-feed ($60, small setback)
+export const BOTTLE_COST = 60;
+export function graftCandidates() {
+  const s = S();
+  return myAnimals().filter(e => e.sex === 'E' && e.lambed != null && s.day - e.lambed <= 10 && myAnimals().filter(k => k.dam === e.id && ageDays(k) <= 10 && !k.grafted).length + myAnimals().filter(k => k.foster === e.id).length < 2);
+}
+export function graft(lambId, eweId) {
+  const s = S(); const a = s.animals[lambId]; const e = s.animals[eweId];
+  if (!a || !a.needsHome) return 'Already taken care of.';
+  if (!e || !graftCandidates().includes(e)) return 'That ewe can’t take another lamb.';
+  a.needsHome = false; a.grafted = true; a.foster = e.id; a.litter = 2; a.damMilk = e.bv.MILK; s.bottleQ = (s.bottleQ || []).filter(x => x !== lambId);
+  news(`${a.name} grafted onto ${e.name}.`, 'good', true); return null;
+}
+export function bottle(lambId) {
+  const s = S(); const a = s.animals[lambId];
+  if (!a || !a.needsHome) return 'Already taken care of.';
+  addCash(-BOTTLE_COST, `Milk replacer — ${a.name}`); a.needsHome = false; a.bottle = true; a.litter = 1; s.bottleQ = (s.bottleQ || []).filter(x => x !== lambId);
+  return null;
+}
 function aiCalendar(d, m, dm) {
   const s = S();
   // Aug 1: culling, retention, flock size drift

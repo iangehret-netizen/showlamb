@@ -1,7 +1,7 @@
 export const SHEEP_PATH = "M544,20 L538,15 L526,11 L462,9 L456,11 L441,26 L438,26 L416,15 L408,16 L402,19 L401,26 L404,35 L414,45 L420,48 L437,51 L442,56 L443,60 L440,99 L435,131 L430,142 L420,150 L338,162 L157,180 L143,185 L133,199 L112,238 L101,263 L99,276 L100,317 L97,325 L86,338 L51,362 L38,376 L31,403 L18,474 L18,483 L21,489 L42,505 L63,517 L88,517 L103,515 L111,510 L115,492 L122,419 L127,396 L133,384 L184,324 L194,315 L202,316 L241,337 L254,340 L264,340 L269,344 L273,344 L408,300 L417,299 L420,302 L422,309 L422,461 L427,474 L434,480 L441,483 L462,486 L471,493 L482,497 L498,497 L509,494 L511,490 L494,299 L495,276 L499,267 L507,257 L510,235 L510,204 L502,150 L499,85 L503,77 L546,38 L547,26Z";
 // ---------- Traits & EPDs ----------
-export const TRAITS = ['muscle', 'dimension', 'balance', 'structure', 'bone', 'look'];
-export const TRAIT_LABEL = { muscle: 'Muscle', dimension: 'Dimension', balance: 'Balance', structure: 'Structure', bone: 'Bone', look: 'Look' };
+export const TRAITS = ['muscle', 'dimension', 'balance', 'structure', 'bone', 'look', 'breed', 'fresh'];
+export const TRAIT_LABEL = { muscle: 'Muscle', dimension: 'Dimension', balance: 'Balance', structure: 'Structure', bone: 'Bone', look: 'Look', breed: 'Breed character', fresh: 'Freshness' };
 
 // sd = genetic spread of the breeding value; dec = decimals to show
 export const EPDS = [
@@ -60,13 +60,12 @@ export const WT_BREEDS = Object.keys(BREEDS).filter(b => b.startsWith('Wether-Ty
 export const baseBreed = b => b.startsWith('Wether-Type ') ? b.slice(12) : b;
 export const REG_BREEDS = Object.keys(BREEDS).filter(b => BREEDS[b].reg !== false);
 
-export const MARKET_CLASSES = ['Blackface Cross', 'Whiteface Cross', 'Dorper', 'Dorset', 'Hampshire', 'Oxford', 'Shropshire', 'Southdown', 'Suffolk', 'AOB'];
-export function marketClassOf(a) {
-  if (a.breed === 'Crossbred' || a.breed === 'Commercial') return a.face === 'white' ? 'Whiteface Cross' : 'Blackface Cross';
-  if (a.breed === 'White Dorper') return 'Dorper';
-  if (a.breed.startsWith('Wether-Type ')) { const b = a.breed.slice(12); return MARKET_CLASSES.includes(b) ? b : 'AOB'; }
-  return MARKET_CLASSES.includes(a.breed) ? a.breed : 'AOB';
-}
+export const MARKET_CLASSES = ['Blackface Cross', 'Whiteface Cross', 'Natural', 'Dorper', 'Dorset', 'Hampshire', 'Oxford', 'Shropshire', 'Southdown', 'Suffolk', 'AOB'];
+// What each market breed class looks for at the breed check (face color + breed type)
+export const BREED_CHECK = {
+  Hampshire: ['black', 'brown'], Suffolk: ['black'], Shropshire: ['black', 'brown'], Southdown: ['brown'], Oxford: ['brown'],
+  Dorset: ['white'], Dorper: ['black'],
+};
 
 // ---------- Feeds ----------
 export const FEEDS = [
@@ -131,12 +130,16 @@ export const TIER = {
   national: { label: 'National', prem: 180, grand: 7500, reserve: 3500, breedCh: 1000, rep: 25, flocks: 140 },
 };
 
+// w = club-side trait weights; quirks: wether = extra love for wethers, big = favors the heavy end, fresh = sorts hard on freshness, purist = breed character on the registered side
 export const JUDGE_STYLES = [
-  { label: 'Power judge — muscle & dimension', w: { muscle: .34, dimension: .26, balance: .12, structure: .1, bone: .08, look: .1 } },
-  { label: 'Balance & eye appeal', w: { muscle: .2, dimension: .14, balance: .26, structure: .12, bone: .06, look: .22 } },
-  { label: 'Structure first', w: { muscle: .2, dimension: .14, balance: .16, structure: .3, bone: .1, look: .1 } },
-  { label: 'Complete package', w: { muscle: .24, dimension: .18, balance: .18, structure: .16, bone: .08, look: .16 } },
-  { label: 'Big-boned & stout', w: { muscle: .24, dimension: .22, balance: .12, structure: .12, bone: .2, look: .1 } },
+  { label: 'Power judge — muscle & dimension', w: { muscle: .3, dimension: .23, balance: .1, structure: .09, bone: .07, look: .08, breed: .03, fresh: .1 }, q: { wether: 1.2, big: 0.6 } },
+  { label: 'Balance & eye appeal', w: { muscle: .18, dimension: .12, balance: .23, structure: .1, bone: .05, look: .18, breed: .04, fresh: .1 }, q: { wether: 1, fresh: 0.5 } },
+  { label: 'Structure first', w: { muscle: .18, dimension: .12, balance: .14, structure: .27, bone: .09, look: .08, breed: .04, fresh: .08 }, q: { wether: 0.8, purist: 0.5 } },
+  { label: 'Complete package', w: { muscle: .21, dimension: .16, balance: .16, structure: .14, bone: .07, look: .12, breed: .04, fresh: .1 }, q: { wether: 1 } },
+  { label: 'Big-boned & stout', w: { muscle: .22, dimension: .2, balance: .1, structure: .1, bone: .18, look: .08, breed: .03, fresh: .09 }, q: { wether: 1, big: 1 } },
+  { label: 'Fresh & correct — sorts on freshness', w: { muscle: .2, dimension: .13, balance: .15, structure: .14, bone: .06, look: .1, breed: .04, fresh: .18 }, q: { wether: 0.9, fresh: 1 } },
+  { label: 'Wether man — loves a wether', w: { muscle: .26, dimension: .2, balance: .12, structure: .1, bone: .06, look: .1, breed: .03, fresh: .13 }, q: { wether: 2 } },
+  { label: 'Breed purist (registered)', w: { muscle: .2, dimension: .13, balance: .15, structure: .14, bone: .07, look: .1, breed: .1, fresh: .11 }, q: { wether: 0.8, purist: 1 } },
 ];
 
 // ---------- Names ----------
@@ -203,3 +206,7 @@ export const DWARF_FREQ = {
   'Wether-Type Hampshire': 0.32, 'Wether-Type Suffolk': 0.32, 'Wether-Type Oxford': 0.3, 'Wether-Type Shropshire': 0.3,
   'Wether-Type Southdown': 0.28, 'Wether-Type Dorset': 0.28, 'Wether-Type Dorper': 0.28, 'Crossbred': 0.32,
 };
+
+// Approx state centers (lat, lon) for hauling distance
+export const STATE_LL = { AL: [32.8, -86.8], AK: [61.4, -152.3], AZ: [34.2, -111.7], AR: [34.9, -92.4], CA: [37.2, -119.5], CO: [39.0, -105.5], CT: [41.6, -72.7], DE: [39.0, -75.5], FL: [28.6, -82.4], GA: [32.7, -83.4], HI: [20.3, -156.4], ID: [44.4, -114.6], IL: [40.0, -89.2], IN: [39.9, -86.3], IA: [42.1, -93.5], KS: [38.5, -98.4], KY: [37.5, -85.3], LA: [31.1, -92.0], ME: [45.4, -69.2], MD: [39.0, -76.8], MA: [42.3, -71.8], MI: [44.3, -85.4], MN: [46.3, -94.3], MS: [32.7, -89.7], MO: [38.4, -92.5], MT: [47.0, -109.6], NE: [41.5, -99.8], NV: [39.3, -116.6], NH: [43.7, -71.6], NJ: [40.2, -74.7], NM: [34.4, -106.1], NY: [42.9, -75.5], NC: [35.6, -79.4], ND: [47.5, -100.5], OH: [40.3, -82.8], OK: [35.6, -97.5], OR: [43.9, -120.6], PA: [40.9, -77.8], RI: [41.7, -71.5], SC: [33.9, -80.9], SD: [44.4, -100.2], TN: [35.9, -86.4], TX: [31.5, -99.3], UT: [39.3, -111.7], VT: [44.1, -72.7], VA: [37.5, -78.9], WA: [47.4, -120.5], WV: [38.6, -80.6], WI: [44.6, -89.9], WY: [43.0, -107.6] };
+export const SHOW_STATE = { denver: 'CO', fortworth: 'TX', sanantonio: 'TX', houston: 'TX', keystone: 'PA', naile: 'KY' };
