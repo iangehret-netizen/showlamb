@@ -40,7 +40,7 @@ export const BREEDS = {
   'Romney': B('Romney', 'white', '#eee8d8', '#f8f5ee', '#f8f5ee', [-4, -3, 1, 2, 0, 0], 135),
   'Shropshire': B('Shropshire', 'black', '#efe8d9', '#3a2c25', '#3a2c25', [4, 4, 3, 2, 1, 3], 130, { spider: 0.01 }),
   'Southdown': B('Southdown', 'brown', '#efe6d6', '#9c7656', '#a8835f', [5, 6, 4, 3, -2, 5], 115),
-  'Wether-Type Southdown': B('Wether-Type Southdown', 'brown', '#efe6d6', '#9c7656', '#a8835f', [7, 7, 3, 2, -1, 4], 118, { reg: false, wt: true }),
+  'Wether-Type Southdown': B('Wether-Type Southdown', 'brown', '#efe6d6', '#9c7656', '#a8835f', [7, 7, 3, 2, -1, 4], 118, { wt: true }),
   'Suffolk': B('Suffolk', 'black', '#f4efe6', '#111111', '#111111', [6, 6, 2, 2, 6, 3], 150, { spider: 0.03 }),
   'Texel': B('Texel', 'white', '#f6f2e8', '#fbfaf6', '#fbfaf6', [9, 7, 0, 0, 2, 0], 130),
   'Tunis': B('Tunis', 'brown', '#efe4cf', '#a35a32', '#a35a32', [0, 1, 1, 1, 0, 1], 130),
@@ -132,14 +132,14 @@ export const TIER = {
 
 // w = club-side trait weights; quirks: wether = extra love for wethers, big = favors the heavy end, fresh = sorts hard on freshness, purist = breed character on the registered side
 export const JUDGE_STYLES = [
-  { label: 'Power judge — muscle & dimension', w: { muscle: .3, dimension: .23, balance: .1, structure: .09, bone: .07, look: .08, breed: .03, fresh: .1 }, q: { wether: 1.2, big: 0.6 } },
+  { label: 'Power judge — muscle & dimension', w: { muscle: .3, dimension: .23, balance: .1, structure: .09, bone: .07, look: .08, breed: .03, fresh: .1 }, q: { wtype: 1, wether: 1.2, big: 0.6 } },
   { label: 'Balance & eye appeal', w: { muscle: .18, dimension: .12, balance: .23, structure: .1, bone: .05, look: .18, breed: .04, fresh: .1 }, q: { wether: 1, fresh: 0.5 } },
-  { label: 'Structure first', w: { muscle: .18, dimension: .12, balance: .14, structure: .27, bone: .09, look: .08, breed: .04, fresh: .08 }, q: { wether: 0.8, purist: 0.5 } },
+  { label: 'Structure first', w: { muscle: .18, dimension: .12, balance: .14, structure: .27, bone: .09, look: .08, breed: .04, fresh: .08 }, q: { wtype: -0.5, wether: 0.8, purist: 0.5 } },
   { label: 'Complete package', w: { muscle: .21, dimension: .16, balance: .16, structure: .14, bone: .07, look: .12, breed: .04, fresh: .1 }, q: { wether: 1 } },
-  { label: 'Big-boned & stout', w: { muscle: .22, dimension: .2, balance: .1, structure: .1, bone: .18, look: .08, breed: .03, fresh: .09 }, q: { wether: 1, big: 1 } },
+  { label: 'Big-boned & stout', w: { muscle: .22, dimension: .2, balance: .1, structure: .1, bone: .18, look: .08, breed: .03, fresh: .09 }, q: { wtype: 0.5, wether: 1, big: 1 } },
   { label: 'Fresh & correct — sorts on freshness', w: { muscle: .2, dimension: .13, balance: .15, structure: .14, bone: .06, look: .1, breed: .04, fresh: .18 }, q: { wether: 0.9, fresh: 1 } },
-  { label: 'Wether man — loves a wether', w: { muscle: .26, dimension: .2, balance: .12, structure: .1, bone: .06, look: .1, breed: .03, fresh: .13 }, q: { wether: 2 } },
-  { label: 'Breed purist (registered)', w: { muscle: .2, dimension: .13, balance: .15, structure: .14, bone: .07, look: .1, breed: .1, fresh: .11 }, q: { wether: 0.8, purist: 1 } },
+  { label: 'Wether man — loves a wether', w: { muscle: .26, dimension: .2, balance: .12, structure: .1, bone: .06, look: .1, breed: .03, fresh: .13 }, q: { wtype: 1, wether: 2 } },
+  { label: 'Breed purist (registered)', w: { muscle: .2, dimension: .13, balance: .15, structure: .14, bone: .07, look: .1, breed: .1, fresh: .11 }, q: { wtype: -1, wether: 0.8, purist: 1 } },
 ];
 
 // ---------- Names ----------

@@ -443,6 +443,35 @@ export function setCare(id, care) { const a = S().animals[id]; a.care = { ...(a.
 export const defaultCare = () => ({ feed: 'developer', lbs: 3, ex: 1, rinse: true, halter: true });
 export function toggleString(id) { const a = S().animals[id]; a.string = !a.string; if (a.string && !a.care) a.care = defaultCare(); }
 export const REG_FEE = 10;
+// Editor mode: change anything about one of your own sheep
+export function editAnimal(id, k, v) {
+  const s = S(); const a = s.animals[id]; if (!a || a.owner !== 'P') return 'Only your own sheep can be edited.';
+  const keep = () => Object.fromEntries(TRAITS.map(t => [t, phen(a, t)]));
+  if (TRAITS.includes(k)) { setCustomTrait(a, k, clamp(+v, 1, 99)); }
+  else if (k === 'name') { const n = String(v).trim(); if (n) a.name = n; }
+  else if (k === 'sex') { a.sex = v; if (v !== 'E') delete a.preg; if (v === 'W') a.reg = a.reg && false; bumpAnimals(); }
+  else if (k === 'breedName') {
+    if (!BREEDS[v]) return 'Unknown breed.';
+    const was = keep(); const fr = a.base.frame;
+    a.breed = v; a.comp = v === 'Crossbred' ? (a.comp || 'Hampshire × Suffolk') : v; a.base = breedBase(v); a.blood = bloodOf(v, a.comp);
+    if (v !== 'Crossbred' && v !== 'Commercial') { a.face = BREEDS[v].face; a.fg = BREED_FG[a.face] || 'WW'; } else a.base.frame = fr;
+    if (BREEDS[v].reg === false) a.reg = false;
+    for (const t of TRAITS) setCustomTrait(a, t, was[t]);
+  }
+  else if (k === 'ageDays') { const was = keep(); a.birth = s.day - Math.max(0, Math.round(+v)); for (const t of TRAITS) setCustomTrait(a, t, was[t]); bumpAnimals(); }
+  else if (k === 'wt') a.wt = Math.max(5, +v);
+  else if (k === 'reg') { if (v && BREEDS[a.breed]?.reg === false) return 'That breed can’t be registered.'; a.reg = !!v; }
+  else if (k === 'dwarf' || k === 'spider' || k === 'blk') a[k] = clamp(Math.round(+v), 0, 2);
+  else if (k === 'scr') a.scr = v;
+  else if (k === 'fg') { a.fg = v; a.face = faceFromGenes(v, (a.chk ?? 0.5)); }
+  else if (k === 'cond') a.cond = clamp(+v, 1, 5);
+  else if (k === 'fit' || k === 'train') a[k] = clamp(+v, 0, 100);
+  else if (k === 'tone') a.tone = clamp(+v, 0, 6);
+  else if (k === 'load') a.load = Math.max(0, +v);
+  else if (k === 'fleece') a.shorn = s.day - Math.max(0, Math.round(+v));
+  else return 'Unknown field.';
+  return null;
+}
 // embryos from the same mating (dam × sire) are stored as one group with a count
 const embKey = e => `${e.dam?.id || e.dam?.name}|${e.sire?.id || e.sire?.name}`;
 export function storeEmbryos(e) {
@@ -459,7 +488,8 @@ export function repairSave() {
     return ok;
   });
   s.ledger = (s.ledger || []).filter(l => Number.isFinite(l.n));
-  for (const a of Object.values(s.animals)) if (a.reg && BREEDS[a.breed]?.reg === false) a.reg = false; // wether-type lines aren't registered
+  if (!s.wtsdFix) { s.wtsdFix = 1; for (const a of Object.values(s.animals)) if (a.breed === 'Wether-Type Southdown' && a.blk !== 2) a.reg = true; }
+  for (const a of Object.values(s.animals)) if (a.reg && BREEDS[a.breed]?.reg === false) a.reg = false; // other wether-type lines aren't registered
   mergeEmbryos();
 }
 export function mergeEmbryos() { const s = S(); const old = s.embryos || []; s.embryos = []; old.forEach(storeEmbryos); }
@@ -971,6 +1001,7 @@ export function allShows() {
 }
 function rng(seed) { let t = seed >>> 0; return () => { t += 0x6D2B79F5; let r = Math.imul(t ^ t >>> 15, 1 | t); r ^= r + Math.imul(r ^ r >>> 7, 61 | r); return ((r ^ r >>> 14) >>> 0) / 4294967296; }; }
 const hashStr = str => [...str].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261);
+export const hashCode = s => hashStr(s);
 // Weekly jackpots: Feb–Oct 2+ regional (home + bordering states) and 1 elsewhere each week; fewer in winter
 export function jackpotsOn(d) {
   const s = S(); const t = dateOf(d); const dow = t.getUTCDay(); const m = t.getUTCMonth(); const y = t.getUTCFullYear();
@@ -1025,6 +1056,8 @@ export function judgeFor(key) {
   if (!s.judges[key]) { const pool = judgePool(); s.judges[key] = { ...pool[hashStr(key) % pool.length] }; }
   return s.judges[key];
 }
+// registered judges differ on type: + likes wether-type (show-ring power), − likes breeding type
+export function judgeTypeTaste(j) { const q = JUDGE_STYLES[j.style]?.q || {}; return clamp((q.wtype ?? 0) + ((hashStr(j.name) % 100) / 100 - 0.5) * 0.8, -1.2, 1.2); }
 export const judgeHistory = name => (S().jhist || {})[name] || [];
 function recordJudge(judge, show, grand) {
   const s = S(); s.jhist = s.jhist || {};
@@ -1120,6 +1153,7 @@ function showScore(a, judge, kind, show) {
     const bw = reg ? { structure: .2, balance: .17, bone: .11, look: .13, muscle: .12, dimension: .1, breed: .1, fresh: .07 } : { structure: .2, balance: .18, bone: .1, look: .14, muscle: .15, dimension: .12, breed: .03, fresh: .08 };
     for (const t of TRAITS) v += (bw[t] * 0.6 + (w[t] || 0) * 0.4) * phen(a, t);
     if (reg && q.purist) v += q.purist * 0.08 * (phen(a, 'breed') - 55);
+    if (reg) v += judgeTypeTaste(judge) * (a.breed.startsWith('Wether-Type') ? 3 : -1.5);
     if (q.fresh) v += q.fresh * 0.05 * (phen(a, 'fresh') - 55);
     if (!reg) v -= fleecePenalty(a, show);
     const exp = weightForAge(ageDays(a), frameOf(a), a.sex);
@@ -1257,7 +1291,7 @@ export function runShow(show) {
   if (show.breeding) {
     const br = take('breeding', breedingEligible, false);
     const byBreed = {};
-    for (const a of br) (byBreed[a.breed] ||= []).push(a);
+    for (const a of br) (byBreed[baseBreed(a.breed)] ||= []).push(a); // wether-type and breeding-type Southdowns show together
     const breeds = [];
     for (const [bname, list] of Object.entries(byBreed).sort()) {
       const classes = [];
@@ -1480,6 +1514,9 @@ function stockFlock(f, withLambs) {
 // Starter builder: breed (or 'Blackface cross' / 'Whiteface cross'), sex E/R/W, age key
 export const STARTER_AGES = [['lamb3', 'Lamb, 2–3 mo', 65, 95], ['lamb6', 'Lamb, 4–6 mo', 120, 180], ['year', 'Yearling', 400, 700], ['y23', '2–3 yr', 730, 1095], ['y45', '4–5 yr', 1460, 1825]];
 export const STARTER_LIMITS = { E: 15, R: 3, W: 4 };
+export const EDITOR_LIMITS = { E: 25, R: 5, W: 5 };
+export const START_CASH = 15000, EDITOR_CASH = 50000;
+export const starterLimits = editor => editor ? EDITOR_LIMITS : STARTER_LIMITS;
 export function makeStarter(breedKey, sex, ageKey) {
   const ag = STARTER_AGES.find(x => x[0] === ageKey) || STARTER_AGES[3];
   const cross = ['Blackface cross', 'Whiteface cross', 'Speckleface cross', 'Natural (club)'].includes(breedKey);
@@ -1514,9 +1551,9 @@ export function starterOptions() {
   const wethers = [['Crossbred', 'Hampshire × Suffolk'], ['Crossbred', 'Suffolk × Shropshire'], ['Crossbred', 'Hampshire × Southdown'], ['Wether-Type Hampshire'], ['Wether-Type Suffolk'], ['Wether-Type Southdown'], ['Wether-Type Dorset'], ['Wether-Type Shropshire']].map(([b, c]) => kid(b, 'W', c));
   return { ewes, rams, wethers };
 }
-export function createWorld({ flockName: fname, home, county }) {
+export function createWorld({ flockName: fname, home, county, editor }) {
   G.s = {
-    v: 1, day: 0, frac: 0, nextId: 1, cash: 15000, home, county: (county || '').replace(/\s*county\s*$/i, '').trim(),
+    v: 1, day: 0, frac: 0, nextId: 1, cash: editor ? EDITOR_CASH : START_CASH, editor: !!editor, home, county: (county || '').replace(/\s*county\s*$/i, '').trim(),
     flocks: [], animals: {}, listings: [], directory: [], tank: [], embryos: [], entries: {}, judges: {}, results: [],
     news: [], toasts: [], ledger: [], topSales: [], sireStats: {}, banners: [], ach: {}, stats: { born: 0, semen: 0 },
     settings: { speed: 1, pauseShows: true, pauseLambing: true }, paused: true, started: false,
